@@ -277,7 +277,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=app_settings.app_name,
     description="Archive and manage Bambu Lab 3MF files",
-    version="0.1.1",
+    version="0.1.2",
     lifespan=lifespan,
 )
 

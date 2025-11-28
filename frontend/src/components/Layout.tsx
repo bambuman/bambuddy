@@ -129,7 +129,7 @@ export function Layout() {
         {/* Footer */}
         <div className="p-2 border-t border-bambu-dark-tertiary">
           <div className={`flex items-center ${sidebarExpanded ? 'justify-between px-2' : 'flex-col gap-2'}`}>
-            {sidebarExpanded && <span className="text-sm text-bambu-gray">v0.1.1</span>}
+            {sidebarExpanded && <span className="text-sm text-bambu-gray">v0.1.2</span>}
             <div className="flex items-center gap-1">
               <a
                 href="https://github.com/maziggy/bambusy"
