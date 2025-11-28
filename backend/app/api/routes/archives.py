@@ -17,6 +17,78 @@ from backend.app.services.archive import ArchiveService
 router = APIRouter(prefix="/archives", tags=["archives"])
 
 
+def compute_time_accuracy(archive: PrintArchive) -> dict:
+    """Compute actual print time and accuracy for an archive.
+
+    Returns dict with actual_time_seconds and time_accuracy.
+    time_accuracy = (estimated / actual) * 100
+    - 100% = perfect estimate
+    - >100% = print was faster than estimated
+    - <100% = print took longer than estimated
+    """
+    result = {"actual_time_seconds": None, "time_accuracy": None}
+
+    if archive.started_at and archive.completed_at and archive.status == "completed":
+        actual_seconds = int((archive.completed_at - archive.started_at).total_seconds())
+        if actual_seconds > 0:
+            result["actual_time_seconds"] = actual_seconds
+
+            if archive.print_time_seconds and archive.print_time_seconds > 0:
+                # Calculate accuracy as percentage
+                accuracy = (archive.print_time_seconds / actual_seconds) * 100
+                result["time_accuracy"] = round(accuracy, 1)
+
+    return result
+
+
+def archive_to_response(
+    archive: PrintArchive,
+    duplicates: list[dict] | None = None,
+    duplicate_count: int = 0,
+) -> dict:
+    """Convert archive model to response dict with computed fields."""
+    data = {
+        "id": archive.id,
+        "printer_id": archive.printer_id,
+        "filename": archive.filename,
+        "file_path": archive.file_path,
+        "file_size": archive.file_size,
+        "content_hash": archive.content_hash,
+        "thumbnail_path": archive.thumbnail_path,
+        "timelapse_path": archive.timelapse_path,
+        "duplicates": duplicates,
+        "duplicate_count": duplicate_count if duplicates is None else len(duplicates),
+        "print_name": archive.print_name,
+        "print_time_seconds": archive.print_time_seconds,
+        "filament_used_grams": archive.filament_used_grams,
+        "filament_type": archive.filament_type,
+        "filament_color": archive.filament_color,
+        "layer_height": archive.layer_height,
+        "nozzle_diameter": archive.nozzle_diameter,
+        "bed_temperature": archive.bed_temperature,
+        "nozzle_temperature": archive.nozzle_temperature,
+        "status": archive.status,
+        "started_at": archive.started_at,
+        "completed_at": archive.completed_at,
+        "extra_data": archive.extra_data,
+        "makerworld_url": archive.makerworld_url,
+        "designer": archive.designer,
+        "is_favorite": archive.is_favorite,
+        "tags": archive.tags,
+        "notes": archive.notes,
+        "cost": archive.cost,
+        "photos": archive.photos,
+        "failure_reason": archive.failure_reason,
+        "created_at": archive.created_at,
+    }
+
+    # Add computed time accuracy fields
+    accuracy_data = compute_time_accuracy(archive)
+    data.update(accuracy_data)
+
+    return data
+
+
 @router.get("/", response_model=list[ArchiveResponse])
 async def list_archives(
     printer_id: int | None = None,
@@ -26,11 +98,21 @@ async def list_archives(
 ):
     """List archived prints."""
     service = ArchiveService(db)
-    return await service.list_archives(
+    archives = await service.list_archives(
         printer_id=printer_id,
         limit=limit,
         offset=offset,
     )
+
+    # Get set of hashes that have duplicates (efficient single query)
+    duplicate_hashes = await service.get_duplicate_hashes()
+
+    # Mark archives that have duplicates
+    result = []
+    for a in archives:
+        has_duplicate = a.content_hash in duplicate_hashes if a.content_hash else False
+        result.append(archive_to_response(a, duplicate_count=1 if has_duplicate else 0))
+    return result
 
 
 @router.get("/stats", response_model=ArchiveStats)
@@ -86,6 +168,42 @@ async def get_archive_stats(db: AsyncSession = Depends(get_db)):
     )
     prints_by_printer = {str(k): v for k, v in printer_result.all()}
 
+    # Time accuracy statistics
+    # Get all completed archives with both estimated and actual times
+    accuracy_result = await db.execute(
+        select(PrintArchive)
+        .where(PrintArchive.status == "completed")
+        .where(PrintArchive.print_time_seconds.isnot(None))
+        .where(PrintArchive.started_at.isnot(None))
+        .where(PrintArchive.completed_at.isnot(None))
+    )
+    archives_with_times = list(accuracy_result.scalars().all())
+
+    average_accuracy = None
+    accuracy_by_printer: dict[str, float] = {}
+
+    if archives_with_times:
+        accuracies = []
+        printer_accuracies: dict[str, list[float]] = {}
+
+        for archive in archives_with_times:
+            acc_data = compute_time_accuracy(archive)
+            if acc_data["time_accuracy"] is not None:
+                accuracies.append(acc_data["time_accuracy"])
+
+                # Group by printer
+                printer_key = str(archive.printer_id) if archive.printer_id else "unknown"
+                if printer_key not in printer_accuracies:
+                    printer_accuracies[printer_key] = []
+                printer_accuracies[printer_key].append(acc_data["time_accuracy"])
+
+        if accuracies:
+            average_accuracy = round(sum(accuracies) / len(accuracies), 1)
+
+        # Calculate per-printer averages
+        for printer_key, accs in printer_accuracies.items():
+            accuracy_by_printer[printer_key] = round(sum(accs) / len(accs), 1)
+
     return ArchiveStats(
         total_prints=total_prints,
         successful_prints=successful_prints,
@@ -95,6 +213,8 @@ async def get_archive_stats(db: AsyncSession = Depends(get_db)):
         total_cost=round(total_cost, 2),
         prints_by_filament_type=prints_by_filament,
         prints_by_printer=prints_by_printer,
+        average_time_accuracy=average_accuracy,
+        time_accuracy_by_printer=accuracy_by_printer if accuracy_by_printer else None,
     )
 
 
@@ -105,7 +225,16 @@ async def get_archive(archive_id: int, db: AsyncSession = Depends(get_db)):
     archive = await service.get_archive(archive_id)
     if not archive:
         raise HTTPException(404, "Archive not found")
-    return archive
+
+    # Find duplicates
+    makerworld_id = archive.extra_data.get("makerworld_model_id") if archive.extra_data else None
+    duplicates = await service.find_duplicates(
+        archive_id=archive.id,
+        content_hash=archive.content_hash,
+        print_name=archive.print_name,
+        makerworld_model_id=makerworld_id,
+    )
+    return archive_to_response(archive, duplicates)
 
 
 @router.patch("/{archive_id}", response_model=ArchiveResponse)
@@ -234,6 +363,51 @@ async def rescan_all_archives(db: AsyncSession = Depends(get_db)):
             if metadata.get("designer"):
                 archive.designer = metadata["designer"]
 
+            updated += 1
+        except Exception as e:
+            errors.append({"id": archive.id, "error": str(e)})
+
+    await db.commit()
+    return {"updated": updated, "errors": errors}
+
+
+@router.get("/{archive_id}/duplicates")
+async def get_archive_duplicates(archive_id: int, db: AsyncSession = Depends(get_db)):
+    """Get duplicates for a specific archive."""
+    service = ArchiveService(db)
+    archive = await service.get_archive(archive_id)
+    if not archive:
+        raise HTTPException(404, "Archive not found")
+
+    makerworld_id = archive.extra_data.get("makerworld_model_id") if archive.extra_data else None
+    duplicates = await service.find_duplicates(
+        archive_id=archive.id,
+        content_hash=archive.content_hash,
+        print_name=archive.print_name,
+        makerworld_model_id=makerworld_id,
+    )
+    return {"duplicates": duplicates, "count": len(duplicates)}
+
+
+@router.post("/backfill-hashes")
+async def backfill_content_hashes(db: AsyncSession = Depends(get_db)):
+    """Compute and store content hashes for all archives missing them."""
+    result = await db.execute(
+        select(PrintArchive).where(PrintArchive.content_hash.is_(None))
+    )
+    archives = list(result.scalars().all())
+
+    updated = 0
+    errors = []
+
+    for archive in archives:
+        try:
+            file_path = settings.base_dir / archive.file_path
+            if not file_path.exists():
+                errors.append({"id": archive.id, "error": "File not found"})
+                continue
+
+            archive.content_hash = ArchiveService.compute_file_hash(file_path)
             updated += 1
         except Exception as e:
             errors.append({"id": archive.id, "error": str(e)})
@@ -888,3 +1062,89 @@ async def reprint_archive(
         "archive_id": archive_id,
         "filename": archive.filename,
     }
+
+
+# =============================================================================
+# Project Page API
+# =============================================================================
+
+@router.get("/{archive_id}/project-page")
+async def get_project_page(archive_id: int, db: AsyncSession = Depends(get_db)):
+    """Get the project page data from the 3MF file."""
+    from backend.app.services.archive import ProjectPageParser
+    from backend.app.schemas.archive import ProjectPageResponse
+
+    service = ArchiveService(db)
+    archive = await service.get_archive(archive_id)
+    if not archive:
+        raise HTTPException(404, "Archive not found")
+
+    file_path = settings.base_dir / archive.file_path
+    if not file_path.exists():
+        raise HTTPException(404, "Archive file not found")
+
+    parser = ProjectPageParser(file_path)
+    data = parser.parse(archive_id)
+
+    return ProjectPageResponse(**data)
+
+
+@router.patch("/{archive_id}/project-page")
+async def update_project_page(
+    archive_id: int,
+    update_data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update project page metadata in the 3MF file."""
+    from backend.app.services.archive import ProjectPageParser
+
+    service = ArchiveService(db)
+    archive = await service.get_archive(archive_id)
+    if not archive:
+        raise HTTPException(404, "Archive not found")
+
+    file_path = settings.base_dir / archive.file_path
+    if not file_path.exists():
+        raise HTTPException(404, "Archive file not found")
+
+    parser = ProjectPageParser(file_path)
+    success = parser.update_metadata(update_data)
+
+    if not success:
+        raise HTTPException(500, "Failed to update project page")
+
+    # Return updated data
+    data = parser.parse(archive_id)
+    return data
+
+
+@router.get("/{archive_id}/project-image/{image_path:path}")
+async def get_project_image(
+    archive_id: int,
+    image_path: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get an image from the 3MF project page."""
+    from backend.app.services.archive import ProjectPageParser
+
+    service = ArchiveService(db)
+    archive = await service.get_archive(archive_id)
+    if not archive:
+        raise HTTPException(404, "Archive not found")
+
+    file_path = settings.base_dir / archive.file_path
+    if not file_path.exists():
+        raise HTTPException(404, "Archive file not found")
+
+    parser = ProjectPageParser(file_path)
+    result = parser.get_image(image_path)
+
+    if not result:
+        raise HTTPException(404, "Image not found in 3MF file")
+
+    image_data, content_type = result
+    return Response(
+        content=image_data,
+        media_type=content_type,
+        headers={"Cache-Control": "max-age=3600"},
+    )

@@ -55,3 +55,12 @@ async def run_migrations(conn):
     except Exception:
         # Column already exists
         pass
+
+    # Migration: Add content_hash column to print_archives for duplicate detection
+    try:
+        await conn.execute(text(
+            "ALTER TABLE print_archives ADD COLUMN content_hash VARCHAR(64)"
+        ))
+    except Exception:
+        # Column already exists
+        pass

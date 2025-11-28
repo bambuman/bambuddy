@@ -1,3 +1,4 @@
+import hashlib
 import json
 import zipfile
 import shutil
@@ -6,7 +7,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_
 
 from backend.app.core.config import settings
 from backend.app.models.archive import PrintArchive
@@ -264,11 +265,305 @@ class ThreeMFParser:
                 break
 
 
+class ProjectPageParser:
+    """Parser for extracting project page data from Bambu Lab 3MF files."""
+
+    def __init__(self, file_path: Path):
+        self.file_path = file_path
+
+    def parse(self, archive_id: int) -> dict:
+        """Extract project page metadata and images from 3MF file."""
+        import html
+        import re
+
+        result = {
+            "title": None,
+            "description": None,
+            "designer": None,
+            "designer_user_id": None,
+            "license": None,
+            "copyright": None,
+            "creation_date": None,
+            "modification_date": None,
+            "origin": None,
+            "profile_title": None,
+            "profile_description": None,
+            "profile_cover": None,
+            "profile_user_id": None,
+            "profile_user_name": None,
+            "design_model_id": None,
+            "design_profile_id": None,
+            "design_region": None,
+            "model_pictures": [],
+            "profile_pictures": [],
+            "thumbnails": [],
+        }
+
+        try:
+            with zipfile.ZipFile(self.file_path, "r") as zf:
+                # Parse 3D/3dmodel.model for metadata
+                model_path = "3D/3dmodel.model"
+                if model_path in zf.namelist():
+                    content = zf.read(model_path).decode("utf-8", errors="ignore")
+
+                    # Extract metadata elements using regex
+                    # Format: <metadata name="Key">Value</metadata> or <metadata name="Key" />
+                    metadata_pattern = r'<metadata\s+name="([^"]+)"[^>]*>([^<]*)</metadata>'
+                    matches = re.findall(metadata_pattern, content)
+
+                    field_mapping = {
+                        "Title": "title",
+                        "Description": "description",
+                        "Designer": "designer",
+                        "DesignerUserId": "designer_user_id",
+                        "License": "license",
+                        "Copyright": "copyright",
+                        "CreationDate": "creation_date",
+                        "ModificationDate": "modification_date",
+                        "Origin": "origin",
+                        "ProfileTitle": "profile_title",
+                        "ProfileDescription": "profile_description",
+                        "ProfileCover": "profile_cover",
+                        "ProfileUserId": "profile_user_id",
+                        "ProfileUserName": "profile_user_name",
+                        "DesignModelId": "design_model_id",
+                        "DesignProfileId": "design_profile_id",
+                        "DesignRegion": "design_region",
+                    }
+
+                    for name, value in matches:
+                        if name in field_mapping:
+                            # Decode HTML entities multiple times (content is often triple-encoded)
+                            decoded = value.strip()
+                            prev = None
+                            while prev != decoded:
+                                prev = decoded
+                                decoded = html.unescape(decoded)
+                            # Normalize non-breaking spaces to regular spaces
+                            decoded = decoded.replace('\xa0', ' ')
+                            result[field_mapping[name]] = decoded if decoded else None
+
+                # List images in Auxiliaries folder
+                from urllib.parse import quote
+                for name in zf.namelist():
+                    if name.startswith("Auxiliaries/Model Pictures/"):
+                        filename = name.split("/")[-1]
+                        if filename:
+                            result["model_pictures"].append({
+                                "name": filename,
+                                "path": name,
+                                "url": f"/api/v1/archives/{archive_id}/project-image/{quote(name, safe='')}",
+                            })
+                    elif name.startswith("Auxiliaries/Profile Pictures/"):
+                        filename = name.split("/")[-1]
+                        if filename:
+                            result["profile_pictures"].append({
+                                "name": filename,
+                                "path": name,
+                                "url": f"/api/v1/archives/{archive_id}/project-image/{quote(name, safe='')}",
+                            })
+                    elif name.startswith("Auxiliaries/.thumbnails/"):
+                        filename = name.split("/")[-1]
+                        if filename:
+                            result["thumbnails"].append({
+                                "name": filename,
+                                "path": name,
+                                "url": f"/api/v1/archives/{archive_id}/project-image/{quote(name, safe='')}",
+                            })
+
+        except Exception as e:
+            result["_error"] = str(e)
+
+        return result
+
+    def get_image(self, image_path: str) -> tuple[bytes, str] | None:
+        """Extract an image from the 3MF file.
+
+        Returns tuple of (image_data, content_type) or None if not found.
+        """
+        try:
+            with zipfile.ZipFile(self.file_path, "r") as zf:
+                if image_path in zf.namelist():
+                    data = zf.read(image_path)
+                    # Determine content type from extension
+                    ext = image_path.lower().split(".")[-1]
+                    content_types = {
+                        "png": "image/png",
+                        "jpg": "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "webp": "image/webp",
+                        "gif": "image/gif",
+                    }
+                    content_type = content_types.get(ext, "application/octet-stream")
+                    return (data, content_type)
+        except Exception:
+            pass
+        return None
+
+    def update_metadata(self, updates: dict) -> bool:
+        """Update project page metadata in the 3MF file.
+
+        Args:
+            updates: Dict with fields to update (title, description, designer, etc.)
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        import html
+        import re
+        import tempfile
+
+        try:
+            # Read the 3MF file
+            with zipfile.ZipFile(self.file_path, "r") as zf_read:
+                # Find and read the 3dmodel.model file
+                model_path = "3D/3dmodel.model"
+                if model_path not in zf_read.namelist():
+                    return False
+
+                content = zf_read.read(model_path).decode("utf-8")
+
+                # Update metadata fields
+                field_mapping = {
+                    "title": "Title",
+                    "description": "Description",
+                    "designer": "Designer",
+                    "license": "License",
+                    "copyright": "Copyright",
+                    "profile_title": "ProfileTitle",
+                    "profile_description": "ProfileDescription",
+                }
+
+                for field, xml_name in field_mapping.items():
+                    if field in updates and updates[field] is not None:
+                        new_value = html.escape(updates[field])
+                        # Replace existing metadata or we'd need to add it
+                        pattern = rf'(<metadata\s+name="{xml_name}"[^>]*>)[^<]*(</metadata>)'
+                        replacement = rf'\g<1>{new_value}\g<2>'
+                        content = re.sub(pattern, replacement, content)
+
+                # Write to a temporary file first
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".3mf") as tmp:
+                    tmp_path = Path(tmp.name)
+
+                # Create new zip with updated content
+                with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf_write:
+                    for item in zf_read.namelist():
+                        if item == model_path:
+                            zf_write.writestr(item, content.encode("utf-8"))
+                        else:
+                            zf_write.writestr(item, zf_read.read(item))
+
+            # Replace original file with updated one
+            shutil.move(tmp_path, self.file_path)
+            return True
+
+        except Exception:
+            # Clean up temp file if it exists
+            if "tmp_path" in locals() and tmp_path.exists():
+                tmp_path.unlink()
+            return False
+
+
 class ArchiveService:
     """Service for archiving print jobs."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    @staticmethod
+    def compute_file_hash(file_path: Path) -> str:
+        """Compute SHA256 hash of a file for duplicate detection."""
+        sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            # Read in chunks to handle large files
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
+    async def get_duplicate_hashes(self) -> set[str]:
+        """Get all content hashes that appear more than once.
+
+        Returns a set of hashes that have duplicates.
+        """
+        from sqlalchemy import func
+
+        result = await self.db.execute(
+            select(PrintArchive.content_hash)
+            .where(PrintArchive.content_hash.isnot(None))
+            .group_by(PrintArchive.content_hash)
+            .having(func.count(PrintArchive.id) > 1)
+        )
+        return {row[0] for row in result.all()}
+
+    async def find_duplicates(
+        self,
+        archive_id: int,
+        content_hash: str | None = None,
+        print_name: str | None = None,
+        makerworld_model_id: str | None = None,
+    ) -> list[dict]:
+        """Find duplicate archives based on hash or name matching.
+
+        Returns list of dicts with id, print_name, created_at, match_type.
+        """
+        duplicates = []
+
+        # First, find exact matches by content hash
+        if content_hash:
+            result = await self.db.execute(
+                select(PrintArchive)
+                .where(
+                    and_(
+                        PrintArchive.content_hash == content_hash,
+                        PrintArchive.id != archive_id,
+                    )
+                )
+                .order_by(PrintArchive.created_at.desc())
+                .limit(10)
+            )
+            for archive in result.scalars().all():
+                duplicates.append({
+                    "id": archive.id,
+                    "print_name": archive.print_name,
+                    "created_at": archive.created_at,
+                    "match_type": "exact",
+                })
+
+        # Then, find similar matches by print name or MakerWorld ID
+        if print_name or makerworld_model_id:
+            conditions = [PrintArchive.id != archive_id]
+
+            name_conditions = []
+            if print_name:
+                # Match if print names are similar (ignoring case)
+                name_conditions.append(PrintArchive.print_name.ilike(print_name))
+            if makerworld_model_id:
+                # Match by MakerWorld model ID stored in extra_data
+                name_conditions.append(
+                    PrintArchive.extra_data["makerworld_model_id"].astext == makerworld_model_id
+                )
+
+            if name_conditions:
+                conditions.append(or_(*name_conditions))
+
+                result = await self.db.execute(
+                    select(PrintArchive)
+                    .where(and_(*conditions))
+                    .order_by(PrintArchive.created_at.desc())
+                    .limit(10)
+                )
+                for archive in result.scalars().all():
+                    # Don't add if already in duplicates (exact match)
+                    if not any(d["id"] == archive.id for d in duplicates):
+                        duplicates.append({
+                            "id": archive.id,
+                            "print_name": archive.print_name,
+                            "created_at": archive.created_at,
+                            "match_type": "similar",
+                        })
+
+        return duplicates
 
     async def archive_print(
         self,
@@ -298,6 +593,9 @@ class ArchiveService:
         dest_file = archive_dir / source_file.name
         shutil.copy2(source_file, dest_file)
 
+        # Compute content hash for duplicate detection
+        content_hash = self.compute_file_hash(dest_file)
+
         # Parse 3MF metadata
         parser = ThreeMFParser(dest_file)
         metadata = parser.parse()
@@ -326,6 +624,7 @@ class ArchiveService:
             filename=source_file.name,
             file_path=str(dest_file.relative_to(settings.base_dir)),
             file_size=dest_file.stat().st_size,
+            content_hash=content_hash,
             thumbnail_path=thumbnail_path,
             print_name=metadata.get("print_name") or source_file.stem,
             print_time_seconds=metadata.get("print_time_seconds"),

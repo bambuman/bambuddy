@@ -34,6 +34,12 @@ export interface Printer {
   updated_at: string;
 }
 
+export interface HMSError {
+  code: string;
+  module: number;
+  severity: number;  // 1=fatal, 2=serious, 3=common, 4=info
+}
+
 export interface PrinterStatus {
   id: number;
   name: string;
@@ -54,6 +60,7 @@ export interface PrinterStatus {
     chamber?: number;
   } | null;
   cover_url: string | null;
+  hms_errors: HMSError[];
 }
 
 export interface PrinterCreate {
@@ -66,16 +73,28 @@ export interface PrinterCreate {
 }
 
 // Archive types
+export interface ArchiveDuplicate {
+  id: number;
+  print_name: string | null;
+  created_at: string;
+  match_type: 'exact' | 'similar';  // 'exact' = hash match, 'similar' = name match
+}
+
 export interface Archive {
   id: number;
   printer_id: number | null;
   filename: string;
   file_path: string;
   file_size: number;
+  content_hash: string | null;
   thumbnail_path: string | null;
   timelapse_path: string | null;
+  duplicates: ArchiveDuplicate[] | null;
+  duplicate_count: number;
   print_name: string | null;
   print_time_seconds: number | null;
+  actual_time_seconds: number | null;  // Computed from started_at/completed_at
+  time_accuracy: number | null;  // Percentage: 100 = perfect, >100 = faster than estimated
   filament_used_grams: number | null;
   filament_type: string | null;
   filament_color: string | null;
@@ -107,6 +126,8 @@ export interface ArchiveStats {
   total_cost: number;
   prints_by_filament_type: Record<string, number>;
   prints_by_printer: Record<string, number>;
+  average_time_accuracy: number | null;
+  time_accuracy_by_printer: Record<string, number> | null;
 }
 
 export interface BulkUploadResult {
@@ -161,6 +182,79 @@ export interface CloudDevice {
   online: boolean;
 }
 
+// Smart Plug types
+export interface SmartPlug {
+  id: number;
+  name: string;
+  ip_address: string;
+  printer_id: number | null;
+  enabled: boolean;
+  auto_on: boolean;
+  auto_off: boolean;
+  off_delay_mode: 'time' | 'temperature';
+  off_delay_minutes: number;
+  off_temp_threshold: number;
+  username: string | null;
+  password: string | null;
+  last_state: string | null;
+  last_checked: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SmartPlugCreate {
+  name: string;
+  ip_address: string;
+  printer_id?: number | null;
+  enabled?: boolean;
+  auto_on?: boolean;
+  auto_off?: boolean;
+  off_delay_mode?: 'time' | 'temperature';
+  off_delay_minutes?: number;
+  off_temp_threshold?: number;
+  username?: string | null;
+  password?: string | null;
+}
+
+export interface SmartPlugUpdate {
+  name?: string;
+  ip_address?: string;
+  printer_id?: number | null;
+  enabled?: boolean;
+  auto_on?: boolean;
+  auto_off?: boolean;
+  off_delay_mode?: 'time' | 'temperature';
+  off_delay_minutes?: number;
+  off_temp_threshold?: number;
+  username?: string | null;
+  password?: string | null;
+}
+
+export interface SmartPlugStatus {
+  state: string | null;
+  reachable: boolean;
+  device_name: string | null;
+}
+
+export interface SmartPlugTestResult {
+  success: boolean;
+  state: string | null;
+  device_name: string | null;
+}
+
+// MQTT Logging types
+export interface MQTTLogEntry {
+  timestamp: string;
+  topic: string;
+  direction: 'in' | 'out';
+  payload: Record<string, unknown>;
+}
+
+export interface MQTTLogsResponse {
+  logging_enabled: boolean;
+  logs: MQTTLogEntry[];
+}
+
 // API functions
 export const api = {
   // Printers
@@ -187,6 +281,22 @@ export const api = {
   disconnectPrinter: (id: number) =>
     request<{ connected: boolean }>(`/printers/${id}/disconnect`, {
       method: 'POST',
+    }),
+
+  // MQTT Debug Logging
+  enableMQTTLogging: (printerId: number) =>
+    request<{ logging_enabled: boolean }>(`/printers/${printerId}/logging/enable`, {
+      method: 'POST',
+    }),
+  disableMQTTLogging: (printerId: number) =>
+    request<{ logging_enabled: boolean }>(`/printers/${printerId}/logging/disable`, {
+      method: 'POST',
+    }),
+  getMQTTLogs: (printerId: number) =>
+    request<MQTTLogsResponse>(`/printers/${printerId}/logging`),
+  clearMQTTLogs: (printerId: number) =>
+    request<{ status: string }>(`/printers/${printerId}/logging`, {
+      method: 'DELETE',
     }),
 
   // Printer File Manager
@@ -236,6 +346,12 @@ export const api = {
   deleteArchive: (id: number) =>
     request<void>(`/archives/${id}`, { method: 'DELETE' }),
   getArchiveStats: () => request<ArchiveStats>('/archives/stats'),
+  getArchiveDuplicates: (id: number) =>
+    request<{ duplicates: ArchiveDuplicate[]; count: number }>(`/archives/${id}/duplicates`),
+  backfillContentHashes: () =>
+    request<{ updated: number; errors: Array<{ id: number; error: string }> }>('/archives/backfill-hashes', {
+      method: 'POST',
+    }),
   getArchiveThumbnail: (id: number) => `${API_BASE}/archives/${id}/thumbnail`,
   getArchiveDownload: (id: number) => `${API_BASE}/archives/${id}/download`,
   getArchiveGcode: (id: number) => `${API_BASE}/archives/${id}/gcode`,
@@ -286,6 +402,45 @@ export const api = {
       has_gcode: boolean;
       build_volume: { x: number; y: number; z: number };
     }>(`/archives/${id}/capabilities`),
+  // Project Page
+  getArchiveProjectPage: (id: number) =>
+    request<{
+      title: string | null;
+      description: string | null;
+      designer: string | null;
+      designer_user_id: string | null;
+      license: string | null;
+      copyright: string | null;
+      creation_date: string | null;
+      modification_date: string | null;
+      origin: string | null;
+      profile_title: string | null;
+      profile_description: string | null;
+      profile_cover: string | null;
+      profile_user_id: string | null;
+      profile_user_name: string | null;
+      design_model_id: string | null;
+      design_profile_id: string | null;
+      design_region: string | null;
+      model_pictures: Array<{ name: string; path: string; url: string }>;
+      profile_pictures: Array<{ name: string; path: string; url: string }>;
+      thumbnails: Array<{ name: string; path: string; url: string }>;
+    }>(`/archives/${id}/project-page`),
+  updateArchiveProjectPage: (id: number, data: {
+    title?: string;
+    description?: string;
+    designer?: string;
+    license?: string;
+    copyright?: string;
+    profile_title?: string;
+    profile_description?: string;
+  }) =>
+    request(`/archives/${id}/project-page`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  getArchiveProjectImageUrl: (archiveId: number, imagePath: string) =>
+    `${API_BASE}/archives/${archiveId}/project-image/${encodeURIComponent(imagePath)}`,
   getArchiveForSlicer: (id: number, filename: string) =>
     `${API_BASE}/archives/${id}/file/${encodeURIComponent(filename.endsWith('.3mf') ? filename : filename + '.3mf')}`,
   reprintArchive: (archiveId: number, printerId: number) =>
@@ -360,4 +515,33 @@ export const api = {
   getCloudSettingDetail: (settingId: string) =>
     request<Record<string, unknown>>(`/cloud/settings/${settingId}`),
   getCloudDevices: () => request<CloudDevice[]>('/cloud/devices'),
+
+  // Smart Plugs
+  getSmartPlugs: () => request<SmartPlug[]>('/smart-plugs/'),
+  getSmartPlug: (id: number) => request<SmartPlug>(`/smart-plugs/${id}`),
+  createSmartPlug: (data: SmartPlugCreate) =>
+    request<SmartPlug>('/smart-plugs/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateSmartPlug: (id: number, data: SmartPlugUpdate) =>
+    request<SmartPlug>(`/smart-plugs/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteSmartPlug: (id: number) =>
+    request<void>(`/smart-plugs/${id}`, { method: 'DELETE' }),
+  controlSmartPlug: (id: number, action: 'on' | 'off' | 'toggle') =>
+    request<{ success: boolean; action: string }>(`/smart-plugs/${id}/control`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
+  getSmartPlugStatus: (id: number) =>
+    request<SmartPlugStatus>(`/smart-plugs/${id}/status`),
+  testSmartPlugConnection: (ip_address: string, username?: string | null, password?: string | null) =>
+    request<SmartPlugTestResult>('/smart-plugs/test-connection', {
+      method: 'POST',
+      body: JSON.stringify({ ip_address, username, password }),
+    }),
+
 };

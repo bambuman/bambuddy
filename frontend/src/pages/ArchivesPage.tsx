@@ -33,6 +33,7 @@ import {
   ScanSearch,
   QrCode,
   Camera,
+  FileText,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { Archive } from '../api/client';
@@ -48,6 +49,7 @@ import { BatchTagModal } from '../components/BatchTagModal';
 import { CalendarView } from '../components/CalendarView';
 import { QRCodeModal } from '../components/QRCodeModal';
 import { PhotoGalleryModal } from '../components/PhotoGalleryModal';
+import { ProjectPageModal } from '../components/ProjectPageModal';
 import { useToast } from '../contexts/ToastContext';
 
 function formatFileSize(bytes: number): string {
@@ -95,6 +97,7 @@ function ArchiveCard({
   const [showTimelapse, setShowTimelapse] = useState(false);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showPhotos, setShowPhotos] = useState(false);
+  const [showProjectPage, setShowProjectPage] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const timelapseScanMutation = useMutation({
@@ -210,6 +213,11 @@ function ArchiveCard({
       onClick: () => setShowPhotos(true),
       disabled: !archive.photos?.length,
     },
+    {
+      label: 'Project Page',
+      icon: <FileText className="w-4 h-4" />,
+      onClick: () => setShowProjectPage(true),
+    },
     { label: '', divider: true, onClick: () => {} },
     {
       label: archive.is_favorite ? 'Remove from Favorites' : 'Add to Favorites',
@@ -285,6 +293,16 @@ function ArchiveCard({
             failed
           </div>
         )}
+        {/* Duplicate badge */}
+        {archive.duplicate_count > 0 && (
+          <div
+            className="absolute top-2 right-2 px-2 py-1 rounded text-xs bg-purple-500/80 text-white flex items-center gap-1"
+            title="This model has been printed before"
+          >
+            <Copy className="w-3 h-3" />
+            duplicate
+          </div>
+        )}
         {/* Timelapse badge */}
         {archive.timelapse_path && (
           <button
@@ -327,10 +345,27 @@ function ArchiveCard({
 
         {/* Stats */}
         <div className="grid grid-cols-2 gap-2 text-xs mb-4 min-h-[48px]">
-          {archive.print_time_seconds && (
-            <div className="flex items-center gap-1.5 text-bambu-gray">
+          {(archive.print_time_seconds || archive.actual_time_seconds) && (
+            <div className="flex items-center gap-1.5 text-bambu-gray" title={
+              archive.time_accuracy
+                ? `Estimated: ${formatDuration(archive.print_time_seconds || 0)}\nActual: ${formatDuration(archive.actual_time_seconds || 0)}\nAccuracy: ${archive.time_accuracy.toFixed(0)}%`
+                : archive.actual_time_seconds
+                  ? `Actual: ${formatDuration(archive.actual_time_seconds)}`
+                  : `Estimated: ${formatDuration(archive.print_time_seconds || 0)}`
+            }>
               <Clock className="w-3 h-3" />
-              {formatDuration(archive.print_time_seconds)}
+              {formatDuration(archive.actual_time_seconds || archive.print_time_seconds || 0)}
+              {archive.time_accuracy && (
+                <span className={`text-[10px] px-1 rounded ${
+                  archive.time_accuracy >= 95 && archive.time_accuracy <= 105
+                    ? 'bg-bambu-green/20 text-bambu-green'
+                    : archive.time_accuracy > 105
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : 'bg-orange-500/20 text-orange-400'
+                }`}>
+                  {archive.time_accuracy > 100 ? '+' : ''}{(archive.time_accuracy - 100).toFixed(0)}%
+                </span>
+              )}
             </div>
           )}
           {archive.filament_used_grams && (
@@ -598,13 +633,22 @@ function ArchiveCard({
           }}
         />
       )}
+
+      {/* Project Page Modal */}
+      {showProjectPage && (
+        <ProjectPageModal
+          archiveId={archive.id}
+          archiveName={archive.print_name || archive.filename}
+          onClose={() => setShowProjectPage(false)}
+        />
+      )}
     </Card>
   );
 }
 
 type SortOption = 'date-desc' | 'date-asc' | 'name-asc' | 'name-desc' | 'size-desc' | 'size-asc';
 type ViewMode = 'grid' | 'list' | 'calendar';
-type Collection = 'all' | 'recent' | 'this-week' | 'this-month' | 'favorites' | 'failed';
+type Collection = 'all' | 'recent' | 'this-week' | 'this-month' | 'favorites' | 'failed' | 'duplicates';
 
 const collections: { id: Collection; label: string; icon: React.ReactNode }[] = [
   { id: 'all', label: 'All Archives', icon: <FolderOpen className="w-4 h-4" /> },
@@ -613,6 +657,7 @@ const collections: { id: Collection; label: string; icon: React.ReactNode }[] = 
   { id: 'this-month', label: 'This Month', icon: <Calendar className="w-4 h-4" /> },
   { id: 'favorites', label: 'Favorites', icon: <Star className="w-4 h-4" /> },
   { id: 'failed', label: 'Failed Prints', icon: <AlertCircle className="w-4 h-4" /> },
+  { id: 'duplicates', label: 'Duplicates', icon: <Copy className="w-4 h-4" /> },
 ];
 
 export function ArchivesPage() {
@@ -698,6 +743,9 @@ export function ArchivesPage() {
           break;
         case 'failed':
           matchesCollection = a.status === 'failed';
+          break;
+        case 'duplicates':
+          matchesCollection = a.duplicate_count > 0;
           break;
       }
 

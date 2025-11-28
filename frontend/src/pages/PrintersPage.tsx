@@ -11,6 +11,8 @@ import {
   RefreshCw,
   Box,
   HardDrive,
+  AlertTriangle,
+  Terminal,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { Printer, PrinterCreate } from '../api/client';
@@ -18,6 +20,7 @@ import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { FileManagerModal } from '../components/FileManagerModal';
+import { MQTTDebugModal } from '../components/MQTTDebugModal';
 
 function formatTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -74,17 +77,21 @@ function CoverImage({ url, printName }: { url: string | null; printName?: string
   );
 }
 
-function PrinterCard({ printer }: { printer: Printer }) {
+function PrinterCard({ printer, hideIfDisconnected }: { printer: Printer; hideIfDisconnected?: boolean }) {
   const queryClient = useQueryClient();
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
+  const [showMQTTDebug, setShowMQTTDebug] = useState(false);
 
   const { data: status } = useQuery({
     queryKey: ['printerStatus', printer.id],
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
+
+  // Determine if this card should be hidden
+  const shouldHide = hideIfDisconnected && status && !status.connected;
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deletePrinter(printer.id),
@@ -99,6 +106,10 @@ function PrinterCard({ printer }: { printer: Printer }) {
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
     },
   });
+
+  if (shouldHide) {
+    return null;
+  }
 
   return (
     <Card className="relative">
@@ -124,6 +135,28 @@ function PrinterCard({ printer }: { printer: Printer }) {
               )}
               {status?.connected ? 'Connected' : 'Offline'}
             </span>
+            {/* HMS Status Indicator */}
+            {status?.connected && (
+              <span
+                className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
+                  status.hms_errors && status.hms_errors.length > 0
+                    ? status.hms_errors.some(e => e.severity <= 2)
+                      ? 'bg-red-500/20 text-red-400'
+                      : 'bg-orange-500/20 text-orange-400'
+                    : 'bg-bambu-green/20 text-bambu-green'
+                }`}
+                title={
+                  status.hms_errors && status.hms_errors.length > 0
+                    ? `${status.hms_errors.length} HMS error(s)`
+                    : 'No HMS errors'
+                }
+              >
+                <AlertTriangle className="w-3 h-3" />
+                {status.hms_errors && status.hms_errors.length > 0
+                  ? status.hms_errors.length
+                  : 'OK'}
+              </span>
+            )}
             <div className="relative">
               <Button
                 variant="ghost"
@@ -143,6 +176,16 @@ function PrinterCard({ printer }: { printer: Printer }) {
                   >
                     <RefreshCw className="w-4 h-4" />
                     Reconnect
+                  </button>
+                  <button
+                    className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+                    onClick={() => {
+                      setShowMQTTDebug(true);
+                      setShowMenu(false);
+                    }}
+                  >
+                    <Terminal className="w-4 h-4" />
+                    MQTT Debug
                   </button>
                   <button
                     className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-bambu-dark-tertiary flex items-center gap-2"
@@ -280,6 +323,15 @@ function PrinterCard({ printer }: { printer: Printer }) {
           printerId={printer.id}
           printerName={printer.name}
           onClose={() => setShowFileManager(false)}
+        />
+      )}
+
+      {/* MQTT Debug Modal */}
+      {showMQTTDebug && (
+        <MQTTDebugModal
+          printerId={printer.id}
+          printerName={printer.name}
+          onClose={() => setShowMQTTDebug(false)}
         />
       )}
     </Card>
@@ -429,6 +481,9 @@ function AddPrinterModal({
 
 export function PrintersPage() {
   const [showAddModal, setShowAddModal] = useState(false);
+  const [hideDisconnected, setHideDisconnected] = useState(() => {
+    return localStorage.getItem('hideDisconnectedPrinters') === 'true';
+  });
   const queryClient = useQueryClient();
 
   const { data: printers, isLoading } = useQuery({
@@ -444,6 +499,12 @@ export function PrintersPage() {
     },
   });
 
+  const toggleHideDisconnected = () => {
+    const newValue = !hideDisconnected;
+    setHideDisconnected(newValue);
+    localStorage.setItem('hideDisconnectedPrinters', String(newValue));
+  };
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-8">
@@ -451,10 +512,21 @@ export function PrintersPage() {
           <h1 className="text-2xl font-bold text-white">Printers</h1>
           <p className="text-bambu-gray">Manage your Bambu Lab printers</p>
         </div>
-        <Button onClick={() => setShowAddModal(true)}>
-          <Plus className="w-4 h-4" />
-          Add Printer
-        </Button>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm text-bambu-gray cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideDisconnected}
+              onChange={toggleHideDisconnected}
+              className="rounded border-bambu-dark-tertiary bg-bambu-dark text-bambu-green focus:ring-bambu-green"
+            />
+            Hide offline
+          </label>
+          <Button onClick={() => setShowAddModal(true)}>
+            <Plus className="w-4 h-4" />
+            Add Printer
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -472,7 +544,7 @@ export function PrintersPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {printers?.map((printer) => (
-            <PrinterCard key={printer.id} printer={printer} />
+            <PrinterCard key={printer.id} printer={printer} hideIfDisconnected={hideDisconnected} />
           ))}
         </div>
       )}

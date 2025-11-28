@@ -79,14 +79,12 @@ export function Layout() {
         className={`${sidebarExpanded ? 'w-64' : 'w-16'} bg-bambu-dark-secondary border-r border-bambu-dark-tertiary flex flex-col fixed inset-y-0 left-0 z-30 transition-all duration-300`}
       >
         {/* Logo */}
-        <div className="p-4 border-b border-bambu-dark-tertiary flex items-center justify-center overflow-hidden">
-          <div className={`${sidebarExpanded ? '' : 'w-10 h-10 overflow-hidden'}`}>
-            <img
-              src={theme === 'dark' ? '/img/bambusy_logo_dark.png' : '/img/bambusy_logo_light.png'}
-              alt="Bambusy"
-              className={sidebarExpanded ? 'h-16 w-auto' : 'h-10 w-auto max-w-none'}
-            />
-          </div>
+        <div className={`border-b border-bambu-dark-tertiary flex items-center justify-center ${sidebarExpanded ? 'p-4' : 'p-2'}`}>
+          <img
+            src={theme === 'dark' ? '/img/bambusy_logo_dark.png' : '/img/bambusy_logo_light.png'}
+            alt="Bambusy"
+            className={sidebarExpanded ? 'h-16 w-auto' : 'h-8 w-8 object-cover object-left'}
+          />
         </div>
 
         {/* Navigation */}
@@ -128,9 +126,37 @@ export function Layout() {
 
         {/* Footer */}
         <div className="p-2 border-t border-bambu-dark-tertiary">
-          <div className={`flex items-center ${sidebarExpanded ? 'justify-between px-2' : 'flex-col gap-2'}`}>
-            {sidebarExpanded && <span className="text-sm text-bambu-gray">v0.1.1</span>}
-            <div className="flex items-center gap-1">
+          {sidebarExpanded ? (
+            <div className="flex items-center justify-between px-2">
+              <span className="text-sm text-bambu-gray">v0.1.2</span>
+              <div className="flex items-center gap-1">
+                <a
+                  href="https://github.com/maziggy/bambusy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
+                  title="View on GitHub"
+                >
+                  <Github className="w-5 h-5" />
+                </a>
+                <button
+                  onClick={() => setShowShortcuts(true)}
+                  className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
+                  title="Keyboard shortcuts (?)"
+                >
+                  <Keyboard className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={toggleTheme}
+                  className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
+                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                  {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1">
               <a
                 href="https://github.com/maziggy/bambusy"
                 target="_blank"
@@ -152,14 +178,10 @@ export function Layout() {
                 className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
                 title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               >
-                {theme === 'dark' ? (
-                  <Sun className="w-5 h-5" />
-                ) : (
-                  <Moon className="w-5 h-5" />
-                )}
+                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
             </div>
-          </div>
+          )}
         </div>
       </aside>
 

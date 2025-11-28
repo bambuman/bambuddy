@@ -6,6 +6,7 @@ import {
   XCircle,
   DollarSign,
   Printer,
+  Target,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { PrintCalendar } from '../components/PrintCalendar';
@@ -113,6 +114,90 @@ function SuccessRateWidget({
           <span className="text-sm text-bambu-gray">Failed:</span>
           <span className="text-sm text-white font-medium">{stats?.failed_prints || 0}</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function TimeAccuracyWidget({
+  stats,
+  printerMap,
+}: {
+  stats: {
+    average_time_accuracy: number | null;
+    time_accuracy_by_printer: Record<string, number> | null;
+  } | undefined;
+  printerMap: Map<string, string>;
+}) {
+  const accuracy = stats?.average_time_accuracy;
+
+  if (accuracy === null || accuracy === undefined) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-bambu-gray text-center py-4">No time accuracy data yet</p>
+      </div>
+    );
+  }
+
+  // Normalize accuracy for display (100% = perfect, clamp between 50-150 for gauge)
+  const displayValue = Math.min(150, Math.max(50, accuracy));
+  const normalizedForGauge = ((displayValue - 50) / 100) * 100; // 50-150 -> 0-100
+
+  // Color based on accuracy
+  const getColor = (acc: number) => {
+    if (acc >= 95 && acc <= 105) return '#00ae42'; // Green - within 5%
+    if (acc > 105) return '#3b82f6'; // Blue - faster than expected
+    return '#f97316'; // Orange - slower than expected
+  };
+
+  const color = getColor(accuracy);
+  const deviation = accuracy - 100;
+
+  return (
+    <div className="flex items-center gap-6">
+      <div className="relative w-28 h-28">
+        <svg className="w-full h-full -rotate-90">
+          <circle cx="56" cy="56" r="48" fill="none" stroke="#3d3d3d" strokeWidth="10" />
+          <circle
+            cx="56"
+            cy="56"
+            r="48"
+            fill="none"
+            stroke={color}
+            strokeWidth="10"
+            strokeLinecap="round"
+            strokeDasharray={`${normalizedForGauge * 3.02} 302`}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl font-bold text-white">{accuracy.toFixed(0)}%</span>
+          <span className={`text-xs ${deviation >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
+            {deviation >= 0 ? '+' : ''}{deviation.toFixed(0)}%
+          </span>
+        </div>
+      </div>
+      <div className="space-y-2 flex-1">
+        <div className="flex items-center gap-2 text-xs text-bambu-gray">
+          <Target className="w-3 h-3" />
+          <span>100% = perfect estimate</span>
+        </div>
+        {stats?.time_accuracy_by_printer && Object.keys(stats.time_accuracy_by_printer).length > 0 && (
+          <div className="space-y-1 mt-2">
+            {Object.entries(stats.time_accuracy_by_printer).slice(0, 3).map(([printerId, acc]) => (
+              <div key={printerId} className="flex items-center justify-between text-xs">
+                <span className="text-bambu-gray truncate max-w-[100px]">
+                  {printerMap.get(printerId) || `Printer ${printerId}`}
+                </span>
+                <span className={`font-medium ${
+                  acc >= 95 && acc <= 105 ? 'text-bambu-green' :
+                  acc > 105 ? 'text-blue-400' : 'text-orange-400'
+                }`}>
+                  {acc.toFixed(0)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -251,6 +336,12 @@ export function StatsPage() {
       id: 'success-rate',
       title: 'Success Rate',
       component: <SuccessRateWidget stats={stats} />,
+      defaultSize: 1,
+    },
+    {
+      id: 'time-accuracy',
+      title: 'Time Accuracy',
+      component: <TimeAccuracyWidget stats={stats} printerMap={printerMap} />,
       defaultSize: 1,
     },
     {
