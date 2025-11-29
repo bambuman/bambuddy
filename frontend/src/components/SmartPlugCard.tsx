@@ -15,6 +15,8 @@ interface SmartPlugCardProps {
 export function SmartPlugCard({ plug, onEdit }: SmartPlugCardProps) {
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showPowerOnConfirm, setShowPowerOnConfirm] = useState(false);
+  const [showPowerOffConfirm, setShowPowerOffConfirm] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Fetch current status
@@ -108,7 +110,7 @@ export function SmartPlugCard({ plug, onEdit }: SmartPlugCardProps) {
               size="sm"
               variant={isOn ? 'primary' : 'secondary'}
               disabled={!isReachable || isPending}
-              onClick={() => controlMutation.mutate('on')}
+              onClick={() => setShowPowerOnConfirm(true)}
               className="flex-1"
             >
               {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
@@ -118,7 +120,7 @@ export function SmartPlugCard({ plug, onEdit }: SmartPlugCardProps) {
               size="sm"
               variant={!isOn ? 'primary' : 'secondary'}
               disabled={!isReachable || isPending}
-              onClick={() => controlMutation.mutate('off')}
+              onClick={() => setShowPowerOffConfirm(true)}
               className="flex-1"
             >
               {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
@@ -289,6 +291,36 @@ export function SmartPlugCard({ plug, onEdit }: SmartPlugCardProps) {
             setShowDeleteConfirm(false);
           }}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Power On Confirmation */}
+      {showPowerOnConfirm && (
+        <ConfirmModal
+          title="Turn On Smart Plug"
+          message={`Are you sure you want to turn on "${plug.name}"?`}
+          confirmText="Turn On"
+          variant="default"
+          onConfirm={() => {
+            controlMutation.mutate('on');
+            setShowPowerOnConfirm(false);
+          }}
+          onCancel={() => setShowPowerOnConfirm(false)}
+        />
+      )}
+
+      {/* Power Off Confirmation */}
+      {showPowerOffConfirm && (
+        <ConfirmModal
+          title="Turn Off Smart Plug"
+          message={`Are you sure you want to turn off "${plug.name}"? This will cut power to the connected device.`}
+          confirmText="Turn Off"
+          variant="danger"
+          onConfirm={() => {
+            controlMutation.mutate('off');
+            setShowPowerOffConfirm(false);
+          }}
+          onCancel={() => setShowPowerOffConfirm(false)}
         />
       )}
     </>

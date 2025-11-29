@@ -13,6 +13,9 @@ import {
   HardDrive,
   AlertTriangle,
   Terminal,
+  Power,
+  PowerOff,
+  Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { Printer, PrinterCreate } from '../api/client';
@@ -83,11 +86,27 @@ function PrinterCard({ printer, hideIfDisconnected }: { printer: Printer; hideIf
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showMQTTDebug, setShowMQTTDebug] = useState(false);
+  const [showPowerOnConfirm, setShowPowerOnConfirm] = useState(false);
+  const [showPowerOffConfirm, setShowPowerOffConfirm] = useState(false);
 
   const { data: status } = useQuery({
     queryKey: ['printerStatus', printer.id],
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
+  });
+
+  // Fetch smart plug for this printer
+  const { data: smartPlug } = useQuery({
+    queryKey: ['smartPlugByPrinter', printer.id],
+    queryFn: () => api.getSmartPlugByPrinter(printer.id),
+  });
+
+  // Fetch smart plug status if plug exists
+  const { data: plugStatus } = useQuery({
+    queryKey: ['smartPlugStatus', smartPlug?.id],
+    queryFn: () => smartPlug ? api.getSmartPlugStatus(smartPlug.id) : null,
+    enabled: !!smartPlug,
+    refetchInterval: 30000,
   });
 
   // Determine if this card should be hidden
@@ -104,6 +123,23 @@ function PrinterCard({ printer, hideIfDisconnected }: { printer: Printer; hideIf
     mutationFn: () => api.connectPrinter(printer.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+    },
+  });
+
+  // Smart plug control mutations
+  const powerControlMutation = useMutation({
+    mutationFn: (action: 'on' | 'off') =>
+      smartPlug ? api.controlSmartPlug(smartPlug.id, action) : Promise.reject('No plug'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['smartPlugStatus', smartPlug?.id] });
+    },
+  });
+
+  const toggleAutoOffMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      smartPlug ? api.updateSmartPlug(smartPlug.id, { auto_off: enabled }) : Promise.reject('No plug'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['smartPlugByPrinter', printer.id] });
     },
   });
 
@@ -229,44 +265,63 @@ function PrinterCard({ printer, hideIfDisconnected }: { printer: Printer; hideIf
               </p>
             </div>
 
-            {/* Current Print */}
-            {status.current_print && status.state === 'RUNNING' && (
-              <div className="mb-4 p-3 bg-bambu-dark rounded-lg">
-                <div className="flex gap-3">
-                  {/* Cover Image */}
-                  <CoverImage url={status.cover_url} printName={status.subtask_name || status.current_print || undefined} />
-                  {/* Print Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-bambu-gray mb-1">Printing</p>
-                    <p className="text-white text-sm mb-2 truncate">
-                      {status.subtask_name || status.current_print}
-                    </p>
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex-1 bg-bambu-dark-tertiary rounded-full h-2 mr-3">
-                        <div
-                          className="bg-bambu-green h-2 rounded-full transition-all"
-                          style={{ width: `${status.progress || 0}%` }}
-                        />
+            {/* Current Print or Idle Placeholder */}
+            <div className="mb-4 p-3 bg-bambu-dark rounded-lg">
+              <div className="flex gap-3">
+                {/* Cover Image */}
+                <CoverImage
+                  url={status.state === 'RUNNING' ? status.cover_url : undefined}
+                  printName={status.state === 'RUNNING' ? (status.subtask_name || status.current_print || undefined) : undefined}
+                />
+                {/* Print Info */}
+                <div className="flex-1 min-w-0">
+                  {status.current_print && status.state === 'RUNNING' ? (
+                    <>
+                      <p className="text-sm text-bambu-gray mb-1">Printing</p>
+                      <p className="text-white text-sm mb-2 truncate">
+                        {status.subtask_name || status.current_print}
+                      </p>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex-1 bg-bambu-dark-tertiary rounded-full h-2 mr-3">
+                          <div
+                            className="bg-bambu-green h-2 rounded-full transition-all"
+                            style={{ width: `${status.progress || 0}%` }}
+                          />
+                        </div>
+                        <span className="text-white">{Math.round(status.progress || 0)}%</span>
                       </div>
-                      <span className="text-white">{Math.round(status.progress || 0)}%</span>
-                    </div>
-                    <div className="flex items-center gap-3 mt-2 text-xs text-bambu-gray">
-                      {status.remaining_time != null && status.remaining_time > 0 && (
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {formatTime(status.remaining_time * 60)}
-                        </span>
-                      )}
-                      {status.layer_num != null && status.total_layers != null && status.total_layers > 0 && (
-                        <span>
-                          Layer {status.layer_num}/{status.total_layers}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-3 mt-2 text-xs text-bambu-gray">
+                        {status.remaining_time != null && status.remaining_time > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatTime(status.remaining_time * 60)}
+                          </span>
+                        )}
+                        {status.layer_num != null && status.total_layers != null && status.total_layers > 0 && (
+                          <span>
+                            Layer {status.layer_num}/{status.total_layers}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-bambu-gray mb-1">Status</p>
+                      <p className="text-white text-sm mb-2 capitalize">
+                        {status.state?.toLowerCase() || 'Idle'}
+                      </p>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex-1 bg-bambu-dark-tertiary rounded-full h-2 mr-3">
+                          <div className="bg-bambu-dark-tertiary h-2 rounded-full" />
+                        </div>
+                        <span className="text-bambu-gray">—</span>
+                      </div>
+                      <p className="text-xs text-bambu-gray mt-2">Ready to print</p>
+                    </>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Temperatures */}
             {status.temperatures && (
@@ -297,6 +352,82 @@ function PrinterCard({ printer, hideIfDisconnected }: { printer: Printer; hideIf
               </div>
             )}
           </>
+        )}
+
+        {/* Smart Plug Controls */}
+        {smartPlug && (
+          <div className="mt-4 pt-4 border-t border-bambu-dark-tertiary">
+            <div className="flex items-center gap-3">
+              {/* Plug name and status */}
+              <div className="flex items-center gap-2 min-w-0">
+                <Zap className="w-4 h-4 text-bambu-gray flex-shrink-0" />
+                <span className="text-sm text-white truncate">{smartPlug.name}</span>
+                {plugStatus && (
+                  <span
+                    className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${
+                      plugStatus.state === 'ON'
+                        ? 'bg-bambu-green/20 text-bambu-green'
+                        : plugStatus.state === 'OFF'
+                        ? 'bg-red-500/20 text-red-400'
+                        : 'bg-bambu-gray/20 text-bambu-gray'
+                    }`}
+                  >
+                    {plugStatus.state || '?'}
+                  </span>
+                )}
+              </div>
+
+              {/* Spacer */}
+              <div className="flex-1" />
+
+              {/* Power buttons */}
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowPowerOnConfirm(true)}
+                  disabled={powerControlMutation.isPending || plugStatus?.state === 'ON'}
+                  className={`px-2 py-1 text-xs rounded transition-colors flex items-center gap-1 ${
+                    plugStatus?.state === 'ON'
+                      ? 'bg-bambu-green text-white'
+                      : 'bg-bambu-dark text-bambu-gray hover:text-white hover:bg-bambu-dark-tertiary'
+                  }`}
+                >
+                  <Power className="w-3 h-3" />
+                  On
+                </button>
+                <button
+                  onClick={() => setShowPowerOffConfirm(true)}
+                  disabled={powerControlMutation.isPending || plugStatus?.state === 'OFF'}
+                  className={`px-2 py-1 text-xs rounded transition-colors flex items-center gap-1 ${
+                    plugStatus?.state === 'OFF'
+                      ? 'bg-red-500/30 text-red-400'
+                      : 'bg-bambu-dark text-bambu-gray hover:text-white hover:bg-bambu-dark-tertiary'
+                  }`}
+                >
+                  <PowerOff className="w-3 h-3" />
+                  Off
+                </button>
+              </div>
+
+              {/* Auto-off toggle */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-xs text-bambu-gray hidden sm:inline">Auto-off</span>
+                <button
+                  onClick={() => toggleAutoOffMutation.mutate(!smartPlug.auto_off)}
+                  disabled={toggleAutoOffMutation.isPending}
+                  title="Auto power-off after print"
+                  className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
+                    smartPlug.auto_off ? 'bg-bambu-green' : 'bg-bambu-dark-tertiary'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-[2px] left-[2px] w-4 h-4 bg-white rounded-full transition-transform ${
+                      smartPlug.auto_off ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Connection Info & Actions */}
@@ -332,6 +463,40 @@ function PrinterCard({ printer, hideIfDisconnected }: { printer: Printer; hideIf
           printerId={printer.id}
           printerName={printer.name}
           onClose={() => setShowMQTTDebug(false)}
+        />
+      )}
+
+      {/* Power On Confirmation */}
+      {showPowerOnConfirm && smartPlug && (
+        <ConfirmModal
+          title="Power On Printer"
+          message={`Are you sure you want to turn ON the power for "${printer.name}"?`}
+          confirmText="Power On"
+          variant="default"
+          onConfirm={() => {
+            powerControlMutation.mutate('on');
+            setShowPowerOnConfirm(false);
+          }}
+          onCancel={() => setShowPowerOnConfirm(false)}
+        />
+      )}
+
+      {/* Power Off Confirmation */}
+      {showPowerOffConfirm && smartPlug && (
+        <ConfirmModal
+          title="Power Off Printer"
+          message={
+            status?.state === 'RUNNING'
+              ? `WARNING: "${printer.name}" is currently printing! Are you sure you want to turn OFF the power? This will interrupt the print and may damage the printer.`
+              : `Are you sure you want to turn OFF the power for "${printer.name}"?`
+          }
+          confirmText="Power Off"
+          variant="danger"
+          onConfirm={() => {
+            powerControlMutation.mutate('off');
+            setShowPowerOffConfirm(false);
+          }}
+          onCancel={() => setShowPowerOffConfirm(false)}
         />
       )}
     </Card>

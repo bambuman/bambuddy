@@ -62,6 +62,18 @@ async def create_smart_plug(
     return plug
 
 
+@router.get("/by-printer/{printer_id}", response_model=SmartPlugResponse | None)
+async def get_smart_plug_by_printer(printer_id: int, db: AsyncSession = Depends(get_db)):
+    """Get the smart plug assigned to a printer."""
+    result = await db.execute(
+        select(SmartPlug).where(SmartPlug.printer_id == printer_id)
+    )
+    plug = result.scalar_one_or_none()
+    if not plug:
+        return None
+    return plug
+
+
 @router.get("/{plug_id}", response_model=SmartPlugResponse)
 async def get_smart_plug(plug_id: int, db: AsyncSession = Depends(get_db)):
     """Get a specific smart plug."""
