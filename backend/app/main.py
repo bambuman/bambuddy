@@ -1,9 +1,16 @@
 import asyncio
+import logging
 from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+
+# Configure logging for all modules
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s [%(name)s] %(message)s'
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -67,21 +74,26 @@ async def on_print_start(printer_id: int, data: dict):
         # Build list of possible 3MF filenames to try
         possible_names = []
 
+        # Bambu printers typically store files as "Name.gcode.3mf"
+        # The subtask_name is usually the best source for the filename
+        if subtask_name:
+            # Try common Bambu naming patterns
+            possible_names.append(f"{subtask_name}.gcode.3mf")
+            possible_names.append(f"{subtask_name}.3mf")
+
         # Try original filename with .3mf extension
         if filename:
-            if filename.endswith(".3mf"):
-                possible_names.append(filename)
-            elif filename.endswith(".gcode"):
-                base = filename.rsplit(".", 1)[0]
+            # Extract just the filename part, not the full path
+            fname = filename.split("/")[-1] if "/" in filename else filename
+            if fname.endswith(".3mf"):
+                possible_names.append(fname)
+            elif fname.endswith(".gcode"):
+                base = fname.rsplit(".", 1)[0]
+                possible_names.append(f"{base}.gcode.3mf")
                 possible_names.append(f"{base}.3mf")
             else:
-                # No extension - try adding .3mf
-                possible_names.append(f"{filename}.3mf")
-                possible_names.append(filename)
-
-        # Try subtask_name with .3mf extension
-        if subtask_name and subtask_name != filename:
-            possible_names.append(f"{subtask_name}.3mf")
+                possible_names.append(f"{fname}.gcode.3mf")
+                possible_names.append(f"{fname}.3mf")
 
         # Remove duplicates while preserving order
         seen = set()
@@ -107,15 +119,19 @@ async def on_print_start(printer_id: int, data: dict):
             temp_path.parent.mkdir(parents=True, exist_ok=True)
 
             for remote_path in remote_paths:
-                if await download_file_async(
-                    printer.ip_address,
-                    printer.access_code,
-                    remote_path,
-                    temp_path,
-                ):
-                    downloaded_filename = try_filename
-                    logger.info(f"Downloaded: {remote_path}")
-                    break
+                logger.debug(f"Trying FTP download: {remote_path}")
+                try:
+                    if await download_file_async(
+                        printer.ip_address,
+                        printer.access_code,
+                        remote_path,
+                        temp_path,
+                    ):
+                        downloaded_filename = try_filename
+                        logger.info(f"Downloaded: {remote_path}")
+                        break
+                except Exception as e:
+                    logger.debug(f"FTP download failed for {remote_path}: {e}")
 
             if downloaded_filename:
                 break

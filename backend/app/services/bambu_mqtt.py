@@ -1,12 +1,15 @@
 import json
 import ssl
 import asyncio
+import logging
 from collections import deque
 from datetime import datetime
 from typing import Callable
 from dataclasses import dataclass, field
 
 import paho.mqtt.client as mqtt
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -114,6 +117,12 @@ class BambuMQTTClient:
         """Process incoming MQTT message from printer."""
         if "print" in payload:
             print_data = payload["print"]
+            # Log when we see gcode_state changes
+            if "gcode_state" in print_data:
+                logger.info(
+                    f"[{self.serial_number}] Received gcode_state: {print_data.get('gcode_state')}, "
+                    f"gcode_file: {print_data.get('gcode_file')}, subtask_name: {print_data.get('subtask_name')}"
+                )
             self._update_state(print_data)
 
     def _update_state(self, data: dict):
@@ -190,6 +199,13 @@ class BambuMQTTClient:
 
         self.state.raw_data = data
 
+        # Log state transitions for debugging
+        if "gcode_state" in data:
+            logger.debug(
+                f"[{self.serial_number}] gcode_state: {self._previous_gcode_state} -> {self.state.state}, "
+                f"file: {self.state.gcode_file}, subtask: {self.state.subtask_name}"
+            )
+
         # Detect print start (state changes TO RUNNING with a file)
         current_file = self.state.gcode_file or self.state.current_print
         is_new_print = (
@@ -206,6 +222,10 @@ class BambuMQTTClient:
         )
 
         if (is_new_print or is_file_change) and self.on_print_start:
+            logger.info(
+                f"[{self.serial_number}] PRINT START detected - file: {current_file}, "
+                f"subtask: {self.state.subtask_name}, is_new: {is_new_print}, is_file_change: {is_file_change}"
+            )
             self.on_print_start({
                 "filename": current_file,
                 "subtask_name": self.state.subtask_name,
@@ -218,6 +238,10 @@ class BambuMQTTClient:
             and self.state.state in ("FINISH", "FAILED")
             and self.on_print_complete
         ):
+            logger.info(
+                f"[{self.serial_number}] PRINT COMPLETE detected - state: {self.state.state}, "
+                f"file: {self._previous_gcode_file or current_file}"
+            )
             self.on_print_complete({
                 "status": "completed" if self.state.state == "FINISH" else "failed",
                 "filename": self._previous_gcode_file or current_file,
