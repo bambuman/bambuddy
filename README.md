@@ -88,6 +88,12 @@ v∆v
   - Configurable event triggers (start, complete, failed, stopped, progress milestones)
   - Quiet hours to suppress notifications during sleep
   - Per-printer filtering
+- **Spoolman Integration** - Sync AMS filament data with your Spoolman server
+  - Automatic or manual sync modes
+  - Per-printer or all-printer sync
+  - Matches Bambu Lab spools by unique tray UUID
+  - Tracks filament usage during prints
+  - Third-party spools (SpoolEase, etc.) gracefully skipped
 - **Cloud Profiles Sync** - Access your Bambu Cloud slicer presets
 - **File Manager** - Browse and manage files on your printer's SD card
 - **Re-print** - Send archived prints back to any connected printer
@@ -598,6 +604,66 @@ By default, notifications are sent for all printers. To limit notifications to a
 2. Select a printer from the **Printer** dropdown
 3. Only events from that printer will trigger notifications
 
+### Spoolman Integration
+
+Bambusy integrates with [Spoolman](https://github.com/Donkie/Spoolman) for filament inventory management. When enabled, AMS filament data syncs with your Spoolman server, allowing you to track remaining filament across all your spools.
+
+#### Prerequisites
+
+- A running Spoolman server (self-hosted or Docker)
+- Bambu Lab spools with original RFID tags in your AMS
+- Spools registered in Spoolman with matching filament types
+
+#### Setting Up Spoolman
+
+1. Go to **Settings** > scroll to **Spoolman Integration**
+2. Enable the **Enable Spoolman** toggle
+3. Enter your Spoolman server URL (e.g., `http://192.168.1.100:7912`)
+4. Click **Save**
+5. Click **Connect** to establish the connection
+
+#### Sync Modes
+
+| Mode | Description |
+|------|-------------|
+| **Automatic** | AMS data syncs automatically when changes are detected (filament loaded/unloaded, usage during prints) |
+| **Manual Only** | Only sync when you click the Sync button |
+
+#### Manual Sync
+
+When connected:
+1. Select a specific printer from the dropdown, or "All Printers"
+2. Click **Sync** to sync AMS data to Spoolman
+3. Results show how many trays were synced
+
+#### How Syncing Works
+
+Bambusy matches AMS spools to Spoolman spools using the **tray UUID** - a unique 32-character identifier that Bambu Lab assigns to each original spool. This ensures consistent matching across different printer models.
+
+**What gets synced:**
+- Remaining filament weight (from AMS sensor)
+- Filament usage during prints (deducted from Spoolman inventory)
+
+**Limitations:**
+- Only **Bambu Lab original spools** can be synced (they have valid tray UUIDs)
+- Third-party spools (SpoolEase, refilled spools, etc.) are gracefully skipped - they won't cause errors
+- Spools must exist in Spoolman before syncing - Bambusy doesn't create new spools automatically
+
+#### Troubleshooting Spoolman
+
+**"Spool not found in Spoolman" errors:**
+- The Bambu Lab spool exists in your AMS but hasn't been added to Spoolman yet
+- Add the spool in Spoolman's web interface, matching the filament type and color
+
+**Third-party spools showing in AMS:**
+- SpoolEase and other third-party spools are automatically skipped during sync
+- This is normal behavior - they don't have Bambu Lab tray UUIDs
+
+**Connection issues:**
+- Verify the Spoolman URL is accessible from your Bambusy server
+- Check that no firewall is blocking port 7912 (or your custom port)
+- Ensure Spoolman is running and healthy
+
 #### Provider Setup Guides
 
 **WhatsApp (CallMeBot):**
@@ -799,9 +865,9 @@ To fix the printer's clock:
 - [x] Automatic finish photo capture
 - [x] K-Profiles management (pressure advance)
 - [x] Push notifications (WhatsApp, ntfy, Pushover, Telegram, Email)
+- [x] Spoolman integration (filament inventory sync)
 - [ ] Maintenance tracker
 - [ ] Full printer control
-- [ ] Spoolman support
 - [ ] Mobile-optimized UI
 - [ ] docs: readme -> wiki
 

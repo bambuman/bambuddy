@@ -12,6 +12,11 @@ class AppSettings(BaseModel):
     energy_cost_per_kwh: float = Field(default=0.15, description="Electricity cost per kWh for energy tracking")
     energy_tracking_mode: str = Field(default="total", description="Energy display mode on stats: 'print' shows sum of per-print energy, 'total' shows lifetime plug consumption")
 
+    # Spoolman integration
+    spoolman_enabled: bool = Field(default=False, description="Enable Spoolman integration for filament tracking")
+    spoolman_url: str = Field(default="", description="Spoolman server URL (e.g., http://localhost:7912)")
+    spoolman_sync_mode: str = Field(default="auto", description="Sync mode: 'auto' syncs immediately, 'manual' requires button press")
+
 
 class AppSettingsUpdate(BaseModel):
     """Schema for updating settings (all fields optional)."""
@@ -23,3 +28,6 @@ class AppSettingsUpdate(BaseModel):
     currency: str | None = None
     energy_cost_per_kwh: float | None = None
     energy_tracking_mode: str | None = None
+    spoolman_enabled: bool | None = None
+    spoolman_url: str | None = None
+    spoolman_sync_mode: str | None = None

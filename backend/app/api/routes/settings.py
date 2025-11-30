@@ -46,7 +46,7 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     for setting in db_settings:
         if setting.key in settings_dict:
             # Parse the value based on the expected type
-            if setting.key in ["auto_archive", "save_thumbnails", "capture_finish_photo"]:
+            if setting.key in ["auto_archive", "save_thumbnails", "capture_finish_photo", "spoolman_enabled"]:
                 settings_dict[setting.key] = setting.value.lower() == "true"
             elif setting.key in ["default_filament_cost", "energy_cost_per_kwh"]:
                 settings_dict[setting.key] = float(setting.value)
@@ -99,3 +99,36 @@ async def check_ffmpeg():
         "installed": ffmpeg_path is not None,
         "path": ffmpeg_path,
     }
+
+
+@router.get("/spoolman")
+async def get_spoolman_settings(db: AsyncSession = Depends(get_db)):
+    """Get Spoolman integration settings."""
+    spoolman_enabled = await get_setting(db, "spoolman_enabled") or "false"
+    spoolman_url = await get_setting(db, "spoolman_url") or ""
+    spoolman_sync_mode = await get_setting(db, "spoolman_sync_mode") or "auto"
+
+    return {
+        "spoolman_enabled": spoolman_enabled,
+        "spoolman_url": spoolman_url,
+        "spoolman_sync_mode": spoolman_sync_mode,
+    }
+
+
+@router.put("/spoolman")
+async def update_spoolman_settings(
+    settings: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update Spoolman integration settings."""
+    if "spoolman_enabled" in settings:
+        await set_setting(db, "spoolman_enabled", settings["spoolman_enabled"])
+    if "spoolman_url" in settings:
+        await set_setting(db, "spoolman_url", settings["spoolman_url"])
+    if "spoolman_sync_mode" in settings:
+        await set_setting(db, "spoolman_sync_mode", settings["spoolman_sync_mode"])
+
+    await db.commit()
+
+    # Return updated settings
+    return await get_spoolman_settings(db)

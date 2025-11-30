@@ -78,6 +78,7 @@ class BambuMQTTClient:
         on_state_change: Callable[[PrinterState], None] | None = None,
         on_print_start: Callable[[dict], None] | None = None,
         on_print_complete: Callable[[dict], None] | None = None,
+        on_ams_change: Callable[[list], None] | None = None,
     ):
         self.ip_address = ip_address
         self.serial_number = serial_number
@@ -85,6 +86,7 @@ class BambuMQTTClient:
         self.on_state_change = on_state_change
         self.on_print_start = on_print_start
         self.on_print_complete = on_print_complete
+        self.on_ams_change = on_ams_change
 
         self.state = PrinterState()
         self._client: mqtt.Client | None = None
@@ -96,6 +98,7 @@ class BambuMQTTClient:
         self._message_log: deque[MQTTLogEntry] = deque(maxlen=100)
         self._logging_enabled: bool = False
         self._last_message_time: float = 0.0  # Track when we last received a message
+        self._previous_ams_hash: str | None = None  # Track AMS changes
 
         # K-profile command tracking
         self._sequence_id: int = 0
@@ -157,6 +160,14 @@ class BambuMQTTClient:
 
     def _process_message(self, payload: dict):
         """Process incoming MQTT message from printer."""
+        # Handle top-level AMS data (comes outside of "print" key)
+        # Wrap in try/except to prevent breaking the MQTT connection
+        if "ams" in payload:
+            try:
+                self._handle_ams_data(payload["ams"])
+            except Exception as e:
+                logger.error(f"[{self.serial_number}] Error handling AMS data: {e}")
+
         if "print" in payload:
             print_data = payload["print"]
             # Log when we see gcode_state changes
@@ -171,6 +182,38 @@ class BambuMQTTClient:
                 self._handle_kprofile_response(print_data)
 
             self._update_state(print_data)
+
+    def _handle_ams_data(self, ams_data: list):
+        """Handle AMS data changes for Spoolman integration.
+
+        This is called when we receive top-level AMS data in MQTT messages.
+        It detects changes and triggers the callback for Spoolman sync.
+        """
+        import hashlib
+
+        # Store AMS data in raw_data so it's accessible via API
+        if "ams" not in self.state.raw_data:
+            self.state.raw_data["ams"] = ams_data
+        else:
+            self.state.raw_data["ams"] = ams_data
+
+        # Create a hash of relevant AMS data to detect changes
+        ams_hash_data = []
+        for ams_unit in ams_data:
+            for tray in ams_unit.get("tray", []):
+                # Include fields that matter for filament tracking
+                ams_hash_data.append(
+                    f"{ams_unit.get('id')}:{tray.get('id')}:"
+                    f"{tray.get('tray_type')}:{tray.get('tag_uid')}:{tray.get('remain')}"
+                )
+        ams_hash = hashlib.md5(":".join(ams_hash_data).encode()).hexdigest()
+
+        # Only trigger callback if AMS data actually changed
+        if ams_hash != self._previous_ams_hash:
+            self._previous_ams_hash = ams_hash
+            if self.on_ams_change:
+                logger.info(f"[{self.serial_number}] AMS data changed, triggering sync callback")
+                self.on_ams_change(ams_data)
 
     def _update_state(self, data: dict):
         """Update printer state from message data."""
@@ -259,7 +302,11 @@ class BambuMQTTClient:
                             severity=severity if severity > 0 else 3,
                         ))
 
+        # Preserve AMS data when updating raw_data (AMS comes at top level, not in print)
+        ams_data = self.state.raw_data.get("ams")
         self.state.raw_data = data
+        if ams_data is not None:
+            self.state.raw_data["ams"] = ams_data
 
         # Log state transitions for debugging
         if "gcode_state" in data:

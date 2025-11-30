@@ -479,6 +479,19 @@ export interface EmailConfig {
   use_tls?: boolean;
 }
 
+// Spoolman types
+export interface SpoolmanStatus {
+  enabled: boolean;
+  connected: boolean;
+  url: string | null;
+}
+
+export interface SpoolmanSyncResult {
+  success: boolean;
+  synced_count: number;
+  errors: string[];
+}
+
 // API functions
 export const api = {
   // Printers
@@ -870,4 +883,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  // Spoolman Integration
+  getSpoolmanStatus: () => request<SpoolmanStatus>('/spoolman/status'),
+  connectSpoolman: () =>
+    request<{ success: boolean; message: string }>('/spoolman/connect', {
+      method: 'POST',
+    }),
+  disconnectSpoolman: () =>
+    request<{ success: boolean; message: string }>('/spoolman/disconnect', {
+      method: 'POST',
+    }),
+  syncPrinterAms: (printerId: number) =>
+    request<SpoolmanSyncResult>(`/spoolman/sync/${printerId}`, {
+      method: 'POST',
+    }),
+  syncAllPrintersAms: () =>
+    request<SpoolmanSyncResult>('/spoolman/sync-all', {
+      method: 'POST',
+    }),
+  getSpoolmanSpools: () =>
+    request<{ spools: unknown[] }>('/spoolman/spools'),
+  getSpoolmanFilaments: () =>
+    request<{ filaments: unknown[] }>('/spoolman/filaments'),
 };

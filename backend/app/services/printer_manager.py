@@ -18,6 +18,7 @@ class PrinterManager:
         self._on_print_start: Callable[[int, dict], None] | None = None
         self._on_print_complete: Callable[[int, dict], None] | None = None
         self._on_status_change: Callable[[int, PrinterState], None] | None = None
+        self._on_ams_change: Callable[[int, list], None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
@@ -35,6 +36,10 @@ class PrinterManager:
     def set_status_change_callback(self, callback: Callable[[int, PrinterState], None]):
         """Set callback for status change events."""
         self._on_status_change = callback
+
+    def set_ams_change_callback(self, callback: Callable[[int, list], None]):
+        """Set callback for AMS data change events."""
+        self._on_ams_change = callback
 
     def _schedule_async(self, coro):
         """Schedule an async coroutine from a sync context."""
@@ -66,6 +71,12 @@ class PrinterManager:
                     self._on_print_complete(printer_id, data)
                 )
 
+        def on_ams_change(ams_data: list):
+            if self._on_ams_change:
+                self._schedule_async(
+                    self._on_ams_change(printer_id, ams_data)
+                )
+
         client = BambuMQTTClient(
             ip_address=printer.ip_address,
             serial_number=printer.serial_number,
@@ -73,6 +84,7 @@ class PrinterManager:
             on_state_change=on_state_change,
             on_print_start=on_print_start,
             on_print_complete=on_print_complete,
+            on_ams_change=on_ams_change,
         )
 
         client.connect()

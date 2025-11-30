@@ -8,6 +8,7 @@ import { SmartPlugCard } from '../components/SmartPlugCard';
 import { AddSmartPlugModal } from '../components/AddSmartPlugModal';
 import { NotificationProviderCard } from '../components/NotificationProviderCard';
 import { AddNotificationModal } from '../components/AddNotificationModal';
+import { SpoolmanSettings } from '../components/SpoolmanSettings';
 import { defaultNavItems, getDefaultView, setDefaultView } from '../components/Layout';
 import { useState, useEffect } from 'react';
 
@@ -325,6 +326,8 @@ export function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          <SpoolmanSettings />
 
           <Card>
             <CardHeader>
