@@ -1,6 +1,10 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
+# Application version - single source of truth
+APP_VERSION = "0.1.4"
+GITHUB_REPO = "maziggy/bambusy"
+
 
 class Settings(BaseSettings):
     app_name: str = "BambuTrack"

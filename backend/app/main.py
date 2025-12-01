@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI
 
 # Import settings first for logging configuration
-from backend.app.core.config import settings as app_settings
+from backend.app.core.config import settings as app_settings, APP_VERSION
 
 # Configure logging based on settings
 # DEBUG=true -> DEBUG level, else use LOG_LEVEL setting
@@ -54,7 +54,7 @@ from fastapi.responses import FileResponse
 from backend.app.core.database import init_db, async_session
 from sqlalchemy import select, or_
 from backend.app.core.websocket import ws_manager
-from backend.app.api.routes import printers, archives, websocket, filaments, cloud, smart_plugs, print_queue, kprofiles, notifications, spoolman
+from backend.app.api.routes import printers, archives, websocket, filaments, cloud, smart_plugs, print_queue, kprofiles, notifications, spoolman, updates
 from backend.app.api.routes import settings as settings_routes
 from backend.app.services.notification_service import notification_service
 from backend.app.services.printer_manager import (
@@ -963,7 +963,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=app_settings.app_name,
     description="Archive and manage Bambu Lab 3MF files",
-    version="0.1.2",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -978,6 +978,7 @@ app.include_router(print_queue.router, prefix=app_settings.api_prefix)
 app.include_router(kprofiles.router, prefix=app_settings.api_prefix)
 app.include_router(notifications.router, prefix=app_settings.api_prefix)
 app.include_router(spoolman.router, prefix=app_settings.api_prefix)
+app.include_router(updates.router, prefix=app_settings.api_prefix)
 app.include_router(websocket.router, prefix=app_settings.api_prefix)
 
 

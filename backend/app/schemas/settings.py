@@ -17,6 +17,9 @@ class AppSettings(BaseModel):
     spoolman_url: str = Field(default="", description="Spoolman server URL (e.g., http://localhost:7912)")
     spoolman_sync_mode: str = Field(default="auto", description="Sync mode: 'auto' syncs immediately, 'manual' requires button press")
 
+    # Updates
+    check_updates: bool = Field(default=True, description="Automatically check for updates on startup")
+
 
 class AppSettingsUpdate(BaseModel):
     """Schema for updating settings (all fields optional)."""
@@ -31,3 +34,4 @@ class AppSettingsUpdate(BaseModel):
     spoolman_enabled: bool | None = None
     spoolman_url: str | None = None
     spoolman_sync_mode: str | None = None
+    check_updates: bool | None = None

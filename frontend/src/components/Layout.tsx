@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Printer, Archive, Calendar, BarChart3, Cloud, Settings, Sun, Moon, ChevronLeft, ChevronRight, Keyboard, Github, GripVertical, type LucideIcon } from 'lucide-react';
+import { Printer, Archive, Calendar, BarChart3, Cloud, Settings, Sun, Moon, ChevronLeft, ChevronRight, Keyboard, Github, GripVertical, ArrowUpCircle, type LucideIcon } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../api/client';
 
 interface NavItem {
   id: string;
@@ -75,6 +77,27 @@ export function Layout() {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const hasRedirected = useRef(false);
+
+  // Check for updates
+  const { data: versionInfo } = useQuery({
+    queryKey: ['version'],
+    queryFn: api.getVersion,
+    staleTime: Infinity,
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: api.getSettings,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  const { data: updateCheck } = useQuery({
+    queryKey: ['updateCheck'],
+    queryFn: api.checkForUpdates,
+    enabled: settings?.check_updates !== false,
+    staleTime: 60 * 60 * 1000, // 1 hour
+    refetchInterval: 60 * 60 * 1000, // Check every hour
+  });
 
   // Redirect to default view on initial load
   useEffect(() => {
@@ -239,7 +262,19 @@ export function Layout() {
         <div className="p-2 border-t border-bambu-dark-tertiary">
           {sidebarExpanded ? (
             <div className="flex items-center justify-between px-2">
-              <span className="text-sm text-bambu-gray">v0.1.4</span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-bambu-gray">v{versionInfo?.version || '...'}</span>
+                {updateCheck?.update_available && (
+                  <button
+                    onClick={() => navigate('/settings')}
+                    className="flex items-center gap-1 text-xs text-bambu-green hover:text-bambu-green/80 transition-colors"
+                    title={`Update available: v${updateCheck.latest_version}`}
+                  >
+                    <ArrowUpCircle className="w-4 h-4" />
+                    <span>Update</span>
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-1">
                 <a
                   href="https://github.com/maziggy/bambusy"
@@ -268,6 +303,15 @@ export function Layout() {
             </div>
           ) : (
             <div className="flex flex-col items-center gap-1">
+              {updateCheck?.update_available && (
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-green hover:text-bambu-green/80"
+                  title={`Update available: v${updateCheck.latest_version}`}
+                >
+                  <ArrowUpCircle className="w-5 h-5" />
+                </button>
+              )}
               <a
                 href="https://github.com/maziggy/bambusy"
                 target="_blank"

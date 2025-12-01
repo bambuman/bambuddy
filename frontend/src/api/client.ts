@@ -153,6 +153,7 @@ export interface AppSettings {
   currency: string;
   energy_cost_per_kwh: number;
   energy_tracking_mode: 'print' | 'total';
+  check_updates: boolean;
 }
 
 export type AppSettingsUpdate = Partial<AppSettings>;
@@ -490,6 +491,31 @@ export interface SpoolmanSyncResult {
   success: boolean;
   synced_count: number;
   errors: string[];
+}
+
+// Update types
+export interface VersionInfo {
+  version: string;
+  repo: string;
+}
+
+export interface UpdateCheckResult {
+  update_available: boolean;
+  current_version: string;
+  latest_version: string | null;
+  release_name?: string;
+  release_notes?: string;
+  release_url?: string;
+  published_at?: string;
+  error?: string;
+  message?: string;
+}
+
+export interface UpdateStatus {
+  status: 'idle' | 'checking' | 'downloading' | 'installing' | 'complete' | 'error';
+  progress: number;
+  message: string;
+  error: string | null;
 }
 
 // API functions
@@ -906,4 +932,13 @@ export const api = {
     request<{ spools: unknown[] }>('/spoolman/spools'),
   getSpoolmanFilaments: () =>
     request<{ filaments: unknown[] }>('/spoolman/filaments'),
+
+  // Updates
+  getVersion: () => request<VersionInfo>('/updates/version'),
+  checkForUpdates: () => request<UpdateCheckResult>('/updates/check'),
+  applyUpdate: () =>
+    request<{ success: boolean; message: string; status: UpdateStatus }>('/updates/apply', {
+      method: 'POST',
+    }),
+  getUpdateStatus: () => request<UpdateStatus>('/updates/status'),
 };
