@@ -705,16 +705,65 @@ class BambuMQTTClient:
             if "left_nozzle_target_temper" in data and "nozzle_target" not in temps:
                 temps["nozzle_target"] = float(data["left_nozzle_target_temper"])
         if "chamber_temper" in data:
-            temps["chamber"] = float(data["chamber_temper"])
+            chamber_val = float(data["chamber_temper"])
+            logger.debug(f"[{self.serial_number}] chamber_temper raw value: {chamber_val}")
+            # Check if we recently set the target locally (within 5 seconds)
+            local_set_time = self.state.temperatures.get("_chamber_target_set_time", 0)
+            respect_local = (time.time() - local_set_time) < 5.0
+            # H2D protocol: chamber_temper encoding indicates heater state
+            # - When > 500: encoded as (target * 65536 + current) - heater is ON
+            # - When < 500: direct Celsius current temp only - heater is OFF
+            if -50 < chamber_val < 100:
+                # Direct value = heater is OFF
+                temps["chamber"] = chamber_val
+                if not respect_local:
+                    temps["chamber_target"] = 0.0  # Heater off means target = 0
+                    logger.debug(f"[{self.serial_number}] chamber_temper direct value: {chamber_val}°C (heater OFF)")
+            else:
+                logger.debug(f"[{self.serial_number}] chamber_temper {chamber_val} out of direct range")
+                # Try to decode if it looks like an encoded value
+                if chamber_val > 500:
+                    mqtt_target = int(chamber_val) // 65536
+                    current = int(chamber_val) % 65536
+                    logger.debug(f"[{self.serial_number}] chamber_temper decoded: mqtt_target={mqtt_target}, current={current}, respect_local={respect_local}")
+                    if -50 < current < 100:
+                        temps["chamber"] = float(current)
+                    # Store decoded target for later use, but DON'T set chamber_heating here!
+                    # Heating state will be calculated later after parsing ctc.info.target (explicit target)
+                    # which is the authoritative source the slicer uses.
+                    if not respect_local:
+                        if 0 <= mqtt_target <= 60:
+                            # Store as "decoded" target - may be overridden by explicit target fields
+                            temps["_chamber_decoded_target"] = float(mqtt_target)
         # Chamber target temperature (set by print file or display)
         if "mc_target_cham" in data:
-            temps["chamber_target"] = float(data["mc_target_cham"])
-        # H2D series: Chamber temp is in info.temp (directly in °C)
+            mc_target = float(data["mc_target_cham"])
+            logger.debug(f"[{self.serial_number}] mc_target_cham raw value: {mc_target}")
+            # Filter out encoded/invalid values - valid chamber target is 0-60°C
+            if 0 <= mc_target <= 60:
+                temps["chamber_target"] = mc_target
+        # H2D series: Chamber temp is in info.temp (may be encoded or direct °C)
+        # NOTE: Don't set chamber_heating here - let ctc.info.target or fallback logic handle it
+        # The encoded target in info.temp may be stale (slicer uses ctc.info.target as source of truth)
         try:
             if "info" in data and isinstance(data["info"], dict):
                 info_temp = data["info"].get("temp")
                 if info_temp is not None and "chamber" not in temps:
-                    temps["chamber"] = float(info_temp)
+                    # Check for encoded value (target * 65536 + current)
+                    if info_temp > 500:
+                        # Decode: extract current temperature and target
+                        target = info_temp // 65536
+                        current = info_temp % 65536
+                        temps["chamber"] = float(current)
+                        # Store decoded target as fallback (may be overridden by ctc.info.target)
+                        if "_chamber_decoded_target" not in temps:
+                            temps["_chamber_decoded_target"] = float(target)
+                        logger.debug(f"[{self.serial_number}] info.temp encoded: {info_temp} -> current={current}, decoded_target={target}")
+                    elif -50 < info_temp < 100:
+                        # Valid direct temperature - heater is OFF
+                        temps["chamber"] = float(info_temp)
+                        temps["chamber_target"] = 0.0  # Direct value means heater off
+                        logger.debug(f"[{self.serial_number}] info.temp direct: {info_temp}°C (heater OFF)")
             # H2D series: Dual extruder temps are in device.extruder.info array
             # Temperature values are encoded as fixed-point (value / 65536 = °C)
             if "device" in data and isinstance(data["device"], dict):
@@ -794,27 +843,89 @@ class BambuMQTTClient:
                     if new_mode != self.state.airduct_mode:
                         logger.info(f"[{self.serial_number}] airduct_mode changed: {self.state.airduct_mode} -> {new_mode}")
                     self.state.airduct_mode = new_mode
+                # Parse chamber temp - may be encoded as (target*65536+current) when > 500
+                # Check if we recently set the target locally (within 5 seconds)
+                local_set_time = self.state.temperatures.get("_chamber_target_set_time", 0)
+                respect_local_target = (time.time() - local_set_time) < 5.0
+
+                # Log ctc_info contents for debugging
+                if ctc_info:
+                    logger.debug(f"[{self.serial_number}] ctc_info keys: {list(ctc_info.keys())}")
+
+                # FIRST: Parse explicit ctc.info.target if available - this is the authoritative target
+                # (what the slicer shows). This OVERRIDES any previously decoded target.
+                explicit_target = None
+                if "target" in ctc_info:
+                    target_val = ctc_info["target"]
+                    logger.debug(f"[{self.serial_number}] ctc_info.target explicit value: {target_val}, respect_local={respect_local_target}")
+                    # Filter out invalid values (valid chamber target is 0-60°C)
+                    if 0 <= target_val <= 60 and not respect_local_target:
+                        explicit_target = float(target_val)
+                        temps["chamber_target"] = explicit_target  # Override any previous value
+                        logger.debug(f"[{self.serial_number}] Setting chamber_target from ctc_info.target: {explicit_target}")
+
+                # Parse chamber temp from ctc.info.temp - may be encoded
                 if "temp" in ctc_info and "chamber" not in temps:
-                    temps["chamber"] = float(ctc_info["temp"])
-                # Parse chamber target from ctc.info.target if available
-                if "target" in ctc_info and "chamber_target" not in temps:
-                    temps["chamber_target"] = float(ctc_info["target"])
-                # Parse chamber heating state from temp encoding
-                # temp > 500 means encoded (target*65536+current), heating = target > 0 AND current < target
-                if "temp" in ctc_info:
                     temp_val = ctc_info["temp"]
+                    logger.debug(f"[{self.serial_number}] ctc_info.temp raw value: {temp_val}")
                     if temp_val > 500:
-                        target = temp_val // 65536
+                        # Encoded value: decode target and current
+                        decoded_target = temp_val // 65536
                         current = temp_val % 65536
-                        temps["chamber_heating"] = target > 0 and current < target
+                        temps["chamber"] = float(current)
+                        logger.debug(f"[{self.serial_number}] ctc_info.temp decoded: target={decoded_target}, current={current}, explicit_target={explicit_target}")
+
+                        # Determine which target to use for heating state:
+                        # Priority: local target > explicit target > decoded target
+                        if respect_local_target:
+                            local_target = self.state.temperatures.get("chamber_target", 0)
+                            temps["chamber_heating"] = local_target > 0 and current < local_target
+                        elif explicit_target is not None:
+                            # Use explicit ctc.info.target - this is what slicer sees
+                            temps["chamber_heating"] = explicit_target > 0 and current < explicit_target
+                        else:
+                            # Fallback to decoded target only if no explicit target available
+                            if not respect_local_target and "chamber_target" not in temps:
+                                temps["chamber_target"] = float(decoded_target)
+                            temps["chamber_heating"] = decoded_target > 0 and current < decoded_target
                     else:
+                        # Direct value (not encoded) - heater is OFF
+                        temps["chamber"] = float(temp_val)
                         temps["chamber_heating"] = False
         except Exception as e:
             logger.warning(f"[{self.serial_number}] Error parsing H2D temperatures: {e}")
         if temps:
+            # Handle chamber_target: prefer explicit over decoded
+            if "_chamber_decoded_target" in temps and "chamber_target" not in temps:
+                # No explicit target available, use decoded target from chamber_temper
+                temps["chamber_target"] = temps["_chamber_decoded_target"]
+            # Remove internal temp key before merging
+            temps.pop("_chamber_decoded_target", None)
+
             # Merge new temps into existing, preserving valid values when new ones are filtered out
             for key, value in temps.items():
                 self.state.temperatures[key] = value
+
+            # Calculate chamber_heating after all targets are known
+            # Priority: local target (if recent) > explicit target (chamber_target) > 0
+            if "chamber" in temps and "chamber_heating" not in temps:
+                current = self.state.temperatures.get("chamber", 0)
+                local_set_time = self.state.temperatures.get("_chamber_target_set_time", 0)
+                respect_local = (time.time() - local_set_time) < 5.0
+
+                if respect_local:
+                    # Use locally-set target
+                    target = self.state.temperatures.get("chamber_target", 0)
+                else:
+                    # Use explicit/decoded target from MQTT
+                    target = self.state.temperatures.get("chamber_target", 0)
+
+                self.state.temperatures["chamber_heating"] = target > 0 and current < target
+                logger.debug(f"[{self.serial_number}] Chamber heating calculated: target={target}, current={current}, heating={self.state.temperatures['chamber_heating']}, respect_local={respect_local}")
+
+            # Debug: log chamber value if it was updated
+            if "chamber" in temps:
+                logger.debug(f"[{self.serial_number}] Chamber temp updated to: {self.state.temperatures.get('chamber')}, target: {self.state.temperatures.get('chamber_target')}, heating: {self.state.temperatures.get('chamber_heating')}")
 
         # Parse HMS (Health Management System) errors
         if "hms" in data:
@@ -1815,7 +1926,16 @@ class BambuMQTTClient:
             True if command was sent, False otherwise
         """
         # M141 sets chamber temperature
-        return self.send_gcode(f"M141 S{target}")
+        result = self.send_gcode(f"M141 S{target}")
+        # Track chamber target locally (MQTT reports encoded values that need filtering)
+        if result:
+            self.state.temperatures["chamber_target"] = float(target)
+            self.state.temperatures["_chamber_target_set_time"] = time.time()
+            # Update heating state immediately based on new target
+            current_temp = self.state.temperatures.get("chamber", 0)
+            self.state.temperatures["chamber_heating"] = target > 0 and current_temp < target
+            logger.info(f"[{self.serial_number}] Tracking chamber target locally: {target}°C (heating={self.state.temperatures['chamber_heating']})")
+        return result
 
     def set_print_speed(self, mode: int) -> bool:
         """Set the print speed mode.

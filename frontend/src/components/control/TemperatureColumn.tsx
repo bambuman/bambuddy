@@ -203,14 +203,23 @@ export function TemperatureColumn({ printer, status, disabled = false }: Tempera
         {renderTargetTemp('chamber', temps.chamber_target ?? 0)}
       </div>
 
-      {/* Air Condition - full width button */}
+      {/* Air Condition - full width button with mode indicator */}
       <button
         onClick={() => setShowAirConditionModal(true)}
         disabled={isDisabled}
-        className="flex items-center justify-center gap-2 w-full py-2 rounded-md bg-bambu-dark-secondary hover:bg-bambu-dark-tertiary border border-bambu-dark-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex items-center justify-between w-full px-3 py-4 rounded-md bg-bambu-dark-secondary hover:bg-bambu-dark-tertiary border border-bambu-dark-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <img src="/icons/ventilation.svg" alt="" className="w-5 h-5 icon-theme" />
-        <span className="text-xs text-bambu-gray">Air Condition</span>
+        <div className="flex items-center gap-2">
+          <img src="/icons/ventilation.svg" alt="" className="w-5 h-5 icon-theme" />
+          <span className="text-xs text-bambu-gray">A/C</span>
+        </div>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+          status?.airduct_mode === 1
+            ? 'bg-orange-500/20 text-orange-400'
+            : 'bg-blue-500/20 text-blue-400'
+        }`}>
+          {status?.airduct_mode === 1 ? 'Heat' : 'Cool'}
+        </span>
       </button>
 
       {/* Speed & Lamp - half width each */}
