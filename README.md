@@ -117,6 +117,14 @@ Since I only have X1C and H2D devices, I'm not able to test the application with
 - **Re-print** - Send archived prints back to any connected printer
 - **Dark/Light Theme** - Easy on the eyes, day or night
 - **Keyboard Shortcuts** - Quick navigation with keyboard shortcuts
+- **Mobile Support** - Fully responsive design for phones and tablets
+  - Hamburger drawer navigation
+  - Touch-friendly buttons and controls
+  - Optimized layouts for small screens
+- **External Sidebar Links** - Add custom links to external tools in the sidebar
+  - Custom icons (built-in or upload your own)
+  - Drag-and-drop reordering with internal nav items
+  - Opens in embedded iframe or new tab
 - **Multi-language Support** - Interface available in English and German
   - Browser language auto-detection
   - Manual language override in settings
@@ -437,6 +445,48 @@ LOG_TO_FILE=true
 | `4` | Go to Cloud Profiles |
 | `5` | Go to Settings |
 | `?` | Show keyboard shortcuts |
+
+### Mobile Support
+
+Bambuddy is fully responsive and works on phones and tablets. On screens smaller than 768px:
+
+- **Hamburger Menu**: Tap the menu icon in the top-left to open the navigation drawer
+- **Touch-Friendly**: All buttons and controls are sized for easy tapping (44px minimum touch targets)
+- **Responsive Layouts**: Pages automatically adapt to smaller screens
+- **Horizontal Scrolling Filters**: Filter bars scroll horizontally on mobile
+- **Context Menus**: Tap the three-dot icon on archive cards to access actions (replaces right-click)
+
+#### Testing Mobile View
+
+To test on desktop, use Chrome DevTools:
+1. Press F12 to open DevTools
+2. Click the device icon (or press Ctrl+Shift+M)
+3. Select a mobile device from the dropdown
+
+### External Sidebar Links
+
+Add custom links to external tools directly in the sidebar navigation. Useful for quick access to:
+- OctoPrint, Mainsail, or other print management tools
+- Spoolman, Obico, or monitoring dashboards
+- Documentation or reference sites
+
+#### Adding External Links
+
+1. Go to **Settings** > scroll to **Sidebar Links**
+2. Click **Add Link**
+3. Enter:
+   - **Name**: Display name for the link
+   - **URL**: Full URL to the external site
+   - **Icon**: Choose from built-in icons or upload a custom SVG
+4. Click **Save**
+
+#### Managing Links
+
+- **Reorder**: Drag links by the grip handle to reorder (can be mixed with internal nav items)
+- **Edit**: Click the pencil icon to modify a link
+- **Delete**: Click the trash icon to remove a link
+
+External links open in an embedded iframe within Bambuddy. Some sites may not allow iframe embedding due to security policies.
 
 ### Dashboard Widgets
 
@@ -993,8 +1043,9 @@ To fix the printer's clock:
 - [x] Smart plug scheduling and power alerts
 - [x] Auto updates from GitHub releases
 - [x] Cloud Profiles template system and diff view
+- [x] Mobile-optimized UI (responsive design)
+- [x] External sidebar links
 - [ ] Full printer control
-- [ ] Mobile-optimized UI
 - [ ] docs: readme -> wiki
 
 ## License
