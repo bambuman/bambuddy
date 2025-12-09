@@ -504,6 +504,18 @@ async def import_backup(
         "archives": [],
     }
 
+    # Log what's in the backup
+    import logging
+    restore_logger = logging.getLogger(__name__)
+    restore_logger.info(f"Restore: Backup version={backup.get('version')}, included={backup.get('included', [])}")
+    restore_logger.info(f"Restore: overwrite={overwrite}")
+    if "printers" in backup:
+        restore_logger.info(f"Restore: Backup contains {len(backup['printers'])} printers")
+        for p in backup["printers"]:
+            restore_logger.info(f"  - {p.get('name')}: access_code={'YES' if p.get('access_code') else 'NO'}, is_active={p.get('is_active')}")
+    else:
+        restore_logger.info("Restore: Backup does NOT contain printers")
+
     # Restore settings (always overwrites)
     if "settings" in backup:
         for key, value in backup["settings"].items():
@@ -653,14 +665,19 @@ async def import_backup(
                 restored["smart_plugs"] += 1
 
     # Restore printers (skip or overwrite duplicates by serial_number)
-    # Note: access_code is never restored for security - must be set manually
+    import logging
+    logger = logging.getLogger(__name__)
+
     if "printers" in backup:
+        logger.info(f"Restore: Processing {len(backup['printers'])} printers from backup")
         for printer_data in backup["printers"]:
+            logger.info(f"Restore: Processing printer {printer_data.get('name')} (serial: {printer_data.get('serial_number')})")
             result = await db.execute(
                 select(Printer).where(Printer.serial_number == printer_data["serial_number"])
             )
             existing = result.scalar_one_or_none()
             if existing:
+                logger.info(f"Restore: Printer already exists (id={existing.id}, is_active={existing.is_active})")
                 if overwrite:
                     existing.name = printer_data["name"]
                     existing.ip_address = printer_data["ip_address"]
@@ -669,11 +686,23 @@ async def import_backup(
                     existing.nozzle_count = printer_data.get("nozzle_count", 1)
                     existing.auto_archive = printer_data.get("auto_archive", True)
                     existing.print_hours_offset = printer_data.get("print_hours_offset", 0.0)
-                    # Don't overwrite access_code or is_active to preserve working connection
+
+                    # If backup includes access_code, also update access_code and is_active
+                    backup_access_code = printer_data.get("access_code")
+                    if backup_access_code and backup_access_code != "CHANGE_ME":
+                        existing.access_code = backup_access_code
+                        is_active_val = printer_data.get("is_active", False)
+                        if isinstance(is_active_val, str):
+                            is_active_val = is_active_val.lower() == "true"
+                        existing.is_active = is_active_val
+                        logger.info(f"Restore: Updated access_code and is_active={is_active_val} from backup")
+
                     restored["printers"] += 1
+                    logger.info(f"Restore: Updated existing printer (overwrite=True)")
                 else:
                     skipped["printers"] += 1
                     skipped_details["printers"].append(f"{printer_data['name']} ({printer_data['serial_number']})")
+                    logger.info(f"Restore: Skipped existing printer (overwrite=False)")
             else:
                 # Use access code from backup if provided, otherwise require manual setup
                 access_code = printer_data.get("access_code")

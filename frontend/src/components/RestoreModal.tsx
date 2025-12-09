@@ -210,12 +210,12 @@ export function RestoreModal({ onClose, onRestore, onSuccess }: RestoreModalProp
                         ) : (
                           <SkipForward className="w-4 h-4 text-bambu-gray" />
                         )}
-                        {overwrite ? 'Overwrite existing data' : 'Skip duplicates'}
+                        {overwrite ? 'Update existing items' : 'Add new items only'}
                       </p>
                       <p className="text-sm text-bambu-gray mt-1">
                         {overwrite
-                          ? 'Replace existing items with data from backup (except access codes)'
-                          : 'Keep existing items, only add new ones from backup'}
+                          ? 'Replace data for items that already exist on this system'
+                          : 'Items that already exist on this system will not be changed'}
                       </p>
                     </div>
                     <Toggle checked={overwrite} onChange={setOverwrite} />
