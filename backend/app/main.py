@@ -1075,6 +1075,24 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/manifest.json")
+async def serve_manifest():
+    """Serve PWA manifest."""
+    manifest_file = app_settings.static_dir / "manifest.json"
+    if manifest_file.exists():
+        return FileResponse(manifest_file, media_type="application/manifest+json")
+    return {"error": "Manifest not found"}
+
+
+@app.get("/sw.js")
+async def serve_service_worker():
+    """Serve service worker."""
+    sw_file = app_settings.static_dir / "sw.js"
+    if sw_file.exists():
+        return FileResponse(sw_file, media_type="application/javascript")
+    return {"error": "Service worker not found"}
+
+
 # Catch-all route for React Router (must be last)
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
