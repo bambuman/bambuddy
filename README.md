@@ -13,7 +13,7 @@
   <a href="https://github.com/maziggy/bambuddy/blob/main/LICENSE"><img src="https://img.shields.io/github/license/maziggy/bambuddy?style=flat-square" alt="License"></a>
   <a href="https://github.com/maziggy/bambuddy/stargazers"><img src="https://img.shields.io/github/stars/maziggy/bambuddy?style=flat-square" alt="Stars"></a>
   <a href="https://github.com/maziggy/bambuddy/issues"><img src="https://img.shields.io/github/issues/maziggy/bambuddy?style=flat-square" alt="Issues"></a>
-  <img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fmaziggy%2Fbambuddy&count_bg=%2379C83D&title_bg=%23555555&icon=github&icon_color=%23E7E7E7&title=visitors&edge_flat=true" alt="Visitors">
+  <img src="https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2Fmaziggy%2Fbambuddy&labelColor=%23555555&countColor=%2379C83D&label=visitors&style=flat-square" alt="Visitors">
 </p>
 
 <p align="center">
