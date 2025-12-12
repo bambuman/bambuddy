@@ -206,6 +206,22 @@
 
 ### Installation
 
+#### Docker (Recommended)
+
+```bash
+git clone https://github.com/maziggy/bambuddy.git
+cd bambuddy
+docker compose up -d
+```
+
+To update or rebuild after pulling changes:
+```bash
+git pull
+docker compose up --build -d
+```
+
+#### Manual Installation
+
 ```bash
 # Clone and setup
 git clone https://github.com/maziggy/bambuddy.git
