@@ -1,9 +1,10 @@
-from pathlib import Path
-from pydantic_settings import BaseSettings
 import logging
+from pathlib import Path
+
+from pydantic_settings import BaseSettings
 
 # Application version - single source of truth
-APP_VERSION = "0.1.5b6"
+APP_VERSION = "0.1.5b7"
 GITHUB_REPO = "maziggy/bambuddy"
 
 # Base directory for path calculations
