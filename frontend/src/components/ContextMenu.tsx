@@ -139,6 +139,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
             onMouseLeave={() => hasSubmenu && handleMouseLeaveSubmenu()}
           >
             <button
+              onMouseEnter={() => hasSubmenu && handleMouseEnterSubmenu(index)}
               onClick={() => {
                 if (hasSubmenu) {
                   // Toggle submenu on click as well
