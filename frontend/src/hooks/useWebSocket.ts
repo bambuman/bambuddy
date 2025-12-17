@@ -83,9 +83,15 @@ export function useWebSocket() {
     ws.onmessage = (event) => {
       try {
         const message: WebSocketMessage = JSON.parse(event.data);
-        // Queue message for throttled processing
-        messageQueueRef.current.push(message);
-        processMessageQueue();
+        // Handle printer_status directly (already throttled) to avoid queue delays
+        // This prevents the "timelapse" effect where status updates are applied slowly
+        if (message.type === 'printer_status' && message.printer_id !== undefined && message.data) {
+          handleMessageRef.current(message);
+        } else {
+          // Queue other messages for throttled processing
+          messageQueueRef.current.push(message);
+          processMessageQueue();
+        }
       } catch {
         // Ignore parse errors
       }
