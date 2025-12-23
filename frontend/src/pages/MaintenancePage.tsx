@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Wrench,
@@ -32,6 +32,7 @@ import {
   Settings,
   Filter,
   CircleDot,
+  Printer,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { MaintenanceStatus, PrinterMaintenanceOverview, MaintenanceType } from '../api/client';
@@ -401,13 +402,17 @@ function SettingsSection({
   onAddType,
   onUpdateType,
   onDeleteType,
+  onAssignType,
+  onRemoveItem,
 }: {
   overview: PrinterMaintenanceOverview[] | undefined;
   types: MaintenanceType[];
   onUpdateInterval: (id: number, data: { custom_interval_hours?: number | null; custom_interval_type?: 'hours' | 'days' | null }) => void;
-  onAddType: (data: { name: string; description?: string; default_interval_hours: number; interval_type: 'hours' | 'days'; icon?: string }) => void;
+  onAddType: (data: { name: string; description?: string; default_interval_hours: number; interval_type: 'hours' | 'days'; icon?: string }, printerIds: number[]) => void;
   onUpdateType: (id: number, data: { name?: string; default_interval_hours?: number; interval_type?: 'hours' | 'days'; icon?: string }) => void;
   onDeleteType: (id: number) => void;
+  onAssignType: (printerId: number, typeId: number) => void;
+  onRemoveItem: (itemId: number) => void;
 }) {
   const [editingInterval, setEditingInterval] = useState<number | null>(null);
   const [intervalInput, setIntervalInput] = useState('');
@@ -417,6 +422,33 @@ function SettingsSection({
   const [newTypeInterval, setNewTypeInterval] = useState('100');
   const [newTypeIntervalType, setNewTypeIntervalType] = useState<'hours' | 'days'>('hours');
   const [newTypeIcon, setNewTypeIcon] = useState('Wrench');
+  const [selectedPrinters, setSelectedPrinters] = useState<Set<number>>(new Set());
+  const [expandedType, setExpandedType] = useState<number | null>(null);
+
+  // Get unique printers from overview
+  const printers = useMemo(() => {
+    if (!overview) return [];
+    return overview.map(o => ({ id: o.printer_id, name: o.printer_name }));
+  }, [overview]);
+
+  // Get which printers have a specific maintenance type assigned
+  const getAssignedPrinters = (typeId: number) => {
+    if (!overview) return [];
+    return overview
+      .filter(p => p.maintenance_items.some(item => item.maintenance_type_id === typeId))
+      .map(p => ({
+        printerId: p.printer_id,
+        printerName: p.printer_name,
+        itemId: p.maintenance_items.find(item => item.maintenance_type_id === typeId)?.id,
+      }));
+  };
+
+  // Get printers that DON'T have a specific type assigned
+  const getUnassignedPrinters = (typeId: number) => {
+    if (!overview) return [];
+    const assignedIds = new Set(getAssignedPrinters(typeId).map(p => p.printerId));
+    return printers.filter(p => !assignedIds.has(p.id));
+  };
 
   // Edit type state
   const [editingType, setEditingType] = useState<MaintenanceType | null>(null);
@@ -460,18 +492,31 @@ function SettingsSection({
 
   const handleAddType = (e: React.FormEvent) => {
     e.preventDefault();
-    if (newTypeName.trim() && parseFloat(newTypeInterval) > 0) {
+    if (newTypeName.trim() && parseFloat(newTypeInterval) > 0 && selectedPrinters.size > 0) {
       onAddType({
         name: newTypeName.trim(),
         default_interval_hours: parseFloat(newTypeInterval),
         interval_type: newTypeIntervalType,
         icon: newTypeIcon,
-      });
+      }, Array.from(selectedPrinters));
       setNewTypeName('');
       setNewTypeInterval('100');
       setNewTypeIntervalType('hours');
+      setSelectedPrinters(new Set());
       setShowAddType(false);
     }
+  };
+
+  const togglePrinterSelection = (printerId: number) => {
+    setSelectedPrinters(prev => {
+      const next = new Set(prev);
+      if (next.has(printerId)) {
+        next.delete(printerId);
+      } else {
+        next.add(printerId);
+      }
+      return next;
+    });
   };
 
   const printerItems = overview?.map(p => ({
@@ -570,14 +615,37 @@ function SettingsSection({
                       })}
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Button type="button" variant="secondary" onClick={() => setShowAddType(false)}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={!newTypeName.trim()}>
-                      Add Type
-                    </Button>
+                </div>
+                {/* Printer selection */}
+                <div className="mt-4">
+                  <label className="block text-xs text-bambu-gray mb-1.5">Assign to Printers</label>
+                  <div className="flex flex-wrap gap-2">
+                    {printers.map(p => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => togglePrinterSelection(p.id)}
+                        className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                          selectedPrinters.has(p.id)
+                            ? 'bg-bambu-green text-white'
+                            : 'bg-bambu-dark text-bambu-gray hover:text-white hover:bg-bambu-dark-tertiary'
+                        }`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
                   </div>
+                  {selectedPrinters.size === 0 && (
+                    <p className="text-xs text-orange-400 mt-1">Select at least one printer</p>
+                  )}
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button type="button" variant="secondary" onClick={() => { setShowAddType(false); setSelectedPrinters(new Set()); }}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={!newTypeName.trim() || selectedPrinters.size === 0}>
+                    Add Type
+                  </Button>
                 </div>
               </form>
             </CardContent>
@@ -674,6 +742,10 @@ function SettingsSection({
               );
             }
 
+            const assignedPrinters = getAssignedPrinters(type.id);
+            const unassignedPrinters = getUnassignedPrinters(type.id);
+            const isExpanded = expandedType === type.id;
+
             return (
               <div key={type.id} className="bg-bambu-dark-secondary rounded-xl p-4 border border-bambu-green/30">
                 <div className="flex items-center gap-3">
@@ -693,6 +765,19 @@ function SettingsSection({
                     </div>
                   </div>
                   <button
+                    onClick={() => setExpandedType(isExpanded ? null : type.id)}
+                    className={`px-2 py-1 rounded-lg border transition-colors flex items-center gap-1 ${
+                      assignedPrinters.length > 0
+                        ? 'border-bambu-green/50 bg-bambu-green/10 text-bambu-green hover:bg-bambu-green/20'
+                        : 'border-orange-400/50 bg-orange-400/10 text-orange-400 hover:bg-orange-400/20'
+                    }`}
+                    title={`${assignedPrinters.length} printer(s) assigned - click to manage`}
+                  >
+                    <Printer className="w-3 h-3" />
+                    <span className="text-xs font-medium">{assignedPrinters.length}</span>
+                    <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                  </button>
+                  <button
                     onClick={() => startEditType(type)}
                     className="p-2 rounded-lg hover:bg-bambu-dark text-bambu-gray hover:text-white transition-colors"
                   >
@@ -709,6 +794,48 @@ function SettingsSection({
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
+
+                {/* Printer assignment management */}
+                {isExpanded && (
+                  <div className="mt-3 pt-3 border-t border-bambu-dark-tertiary">
+                    <p className="text-xs text-bambu-gray mb-2">Assigned to printers:</p>
+                    {assignedPrinters.length === 0 ? (
+                      <p className="text-xs text-orange-400">No printers assigned</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {assignedPrinters.map(p => (
+                          <span
+                            key={p.printerId}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-bambu-dark rounded text-xs text-white"
+                          >
+                            {p.printerName}
+                            <button
+                              onClick={() => p.itemId && onRemoveItem(p.itemId)}
+                              className="hover:text-red-400 ml-1"
+                              title="Remove from this printer"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {unassignedPrinters.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        <span className="text-xs text-bambu-gray mr-1">Add:</span>
+                        {unassignedPrinters.map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => onAssignType(p.id, type.id)}
+                            className="px-2 py-1 bg-bambu-dark hover:bg-bambu-green/20 rounded text-xs text-bambu-gray hover:text-bambu-green transition-colors"
+                          >
+                            + {p.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -850,17 +977,8 @@ export function MaintenancePage() {
     },
   });
 
-  const addTypeMutation = useMutation({
-    mutationFn: api.createMaintenanceType,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['maintenanceTypes'] });
-      queryClient.invalidateQueries({ queryKey: ['maintenanceOverview'] });
-      showToast('Maintenance type added');
-    },
-    onError: (error: Error) => {
-      showToast(error.message, 'error');
-    },
-  });
+  // addTypeMutation removed - we now handle type creation with printer assignment
+  // directly in onAddType callback
 
   const updateTypeMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<{ name: string; default_interval_hours: number; interval_type: 'hours' | 'days'; icon: string }> }) =>
@@ -894,6 +1012,29 @@ export function MaintenancePage() {
       queryClient.invalidateQueries({ queryKey: ['maintenanceOverview'] });
       queryClient.invalidateQueries({ queryKey: ['maintenanceSummary'] });
       showToast('Print hours updated');
+    },
+    onError: (error: Error) => {
+      showToast(error.message, 'error');
+    },
+  });
+
+  const assignTypeMutation = useMutation({
+    mutationFn: ({ printerId, typeId }: { printerId: number; typeId: number }) =>
+      api.assignMaintenanceType(printerId, typeId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['maintenanceOverview'] });
+      showToast('Printer assigned');
+    },
+    onError: (error: Error) => {
+      showToast(error.message, 'error');
+    },
+  });
+
+  const removeItemMutation = useMutation({
+    mutationFn: api.removeMaintenanceItem,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['maintenanceOverview'] });
+      showToast('Printer removed');
     },
     onError: (error: Error) => {
       showToast(error.message, 'error');
@@ -1002,9 +1143,21 @@ export function MaintenancePage() {
           onUpdateInterval={(id, data) =>
             updateMutation.mutate({ id, data })
           }
-          onAddType={(data) => addTypeMutation.mutate(data)}
+          onAddType={async (data, printerIds) => {
+            // Create the type first, then assign to selected printers
+            const newType = await api.createMaintenanceType(data);
+            // Assign to each selected printer
+            for (const printerId of printerIds) {
+              await api.assignMaintenanceType(printerId, newType.id);
+            }
+            queryClient.invalidateQueries({ queryKey: ['maintenanceTypes'] });
+            queryClient.invalidateQueries({ queryKey: ['maintenanceOverview'] });
+            showToast('Maintenance type added');
+          }}
           onUpdateType={(id, data) => updateTypeMutation.mutate({ id, data })}
           onDeleteType={(id) => deleteTypeMutation.mutate(id)}
+          onAssignType={(printerId, typeId) => assignTypeMutation.mutate({ printerId, typeId })}
+          onRemoveItem={(itemId) => removeItemMutation.mutate(itemId)}
         />
       )}
     </div>

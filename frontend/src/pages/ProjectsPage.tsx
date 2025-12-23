@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   FolderKanban,
@@ -9,10 +10,14 @@ import {
   Archive,
   ListTodo,
   Package,
+  Clock,
+  CheckCircle2,
+  AlertTriangle,
+  ChevronRight,
+  MoreVertical,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { ProjectListItem, ProjectCreate, ProjectUpdate } from '../api/client';
-import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
@@ -36,12 +41,15 @@ interface ProjectModalProps {
   isLoading: boolean;
 }
 
-function ProjectModal({ project, onClose, onSave, isLoading }: ProjectModalProps) {
+export function ProjectModal({ project, onClose, onSave, isLoading }: ProjectModalProps) {
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
   const [color, setColor] = useState(project?.color || PROJECT_COLORS[0]);
   const [targetCount, setTargetCount] = useState(project?.target_count?.toString() || '');
   const [status, setStatus] = useState(project?.status || 'active');
+  const [tags, setTags] = useState((project as ProjectListItem & { tags?: string })?.tags || '');
+  const [dueDate, setDueDate] = useState((project as ProjectListItem & { due_date?: string })?.due_date?.split('T')[0] || '');
+  const [priority, setPriority] = useState((project as ProjectListItem & { priority?: string })?.priority || 'normal');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +58,9 @@ function ProjectModal({ project, onClose, onSave, isLoading }: ProjectModalProps
       description: description.trim() || undefined,
       color,
       target_count: targetCount ? parseInt(targetCount, 10) : undefined,
+      tags: tags.trim() || undefined,
+      due_date: dueDate || undefined,
+      priority,
       ...(project && { status }),
     });
   };
@@ -124,6 +135,50 @@ function ProjectModal({ project, onClose, onSave, isLoading }: ProjectModalProps
             />
           </div>
 
+          {/* Tags */}
+          <div>
+            <label className="block text-sm font-medium text-white mb-1">
+              Tags (comma-separated)
+            </label>
+            <input
+              type="text"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              className="w-full bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+              placeholder="e.g., voron, functional, gift"
+            />
+          </div>
+
+          {/* Due Date and Priority in a row */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-white mb-1">
+                Due Date
+              </label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-white focus:outline-none focus:border-bambu-green"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-white mb-1">
+                Priority
+              </label>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+                className="w-full bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-white focus:outline-none focus:border-bambu-green"
+              >
+                <option value="low">Low</option>
+                <option value="normal">Normal</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+          </div>
+
           {project && (
             <div>
               <label className="block text-sm font-medium text-white mb-1">
@@ -172,74 +227,121 @@ function ProjectCard({ project, onClick, onEdit, onDelete }: ProjectCardProps) {
   const progressPercent = project.progress_percent ?? 0;
   const isCompleted = project.status === 'completed';
   const isArchived = project.status === 'archived';
+  const [showActions, setShowActions] = useState(false);
+
+  // Status icon and color
+  const getStatusConfig = () => {
+    if (isCompleted) return { icon: CheckCircle2, color: 'text-bambu-green', bg: 'bg-bambu-green/10' };
+    if (isArchived) return { icon: Archive, color: 'text-bambu-gray', bg: 'bg-bambu-gray/10' };
+    if (project.queue_count > 0) return { icon: Clock, color: 'text-blue-400', bg: 'bg-blue-400/10' };
+    return { icon: FolderKanban, color: 'text-bambu-gray', bg: 'bg-bambu-gray/10' };
+  };
+  const statusConfig = getStatusConfig();
 
   return (
-    <Card className="hover:border-bambu-gray/30 transition-colors cursor-pointer" onClick={onClick}>
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div
-              className="w-3 h-3 rounded-full flex-shrink-0"
-              style={{ backgroundColor: project.color || '#6b7280' }}
-            />
-            <div>
-              <h3 className="font-medium text-white">{project.name}</h3>
+    <div
+      className="group relative bg-bambu-card rounded-xl border border-bambu-dark-tertiary hover:border-bambu-gray/40 transition-all cursor-pointer overflow-hidden"
+      onClick={onClick}
+    >
+      {/* Color accent bar */}
+      <div
+        className="absolute top-0 left-0 w-1 h-full"
+        style={{ backgroundColor: project.color || '#6b7280' }}
+      />
+
+      <div className="p-5 pl-6">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className={`p-2 rounded-lg ${statusConfig.bg} flex-shrink-0`}>
+              <statusConfig.icon className={`w-5 h-5 ${statusConfig.color}`} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-white truncate">{project.name}</h3>
+                {isCompleted && (
+                  <span className="text-xs bg-bambu-green/20 text-bambu-green px-2 py-0.5 rounded-full whitespace-nowrap">
+                    Done
+                  </span>
+                )}
+                {isArchived && (
+                  <span className="text-xs bg-bambu-gray/20 text-bambu-gray px-2 py-0.5 rounded-full whitespace-nowrap">
+                    Archived
+                  </span>
+                )}
+              </div>
               {project.description && (
-                <p className="text-sm text-bambu-gray/70 mt-0.5 line-clamp-1">
+                <p className="text-sm text-bambu-gray/70 mt-1 line-clamp-1">
                   {project.description}
                 </p>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-            {isCompleted && (
-              <span className="text-xs bg-bambu-green/20 text-bambu-green px-2 py-0.5 rounded">
-                Completed
-              </span>
+
+          {/* Actions menu */}
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="p-1.5 rounded-lg hover:bg-bambu-dark text-bambu-gray hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+              onClick={() => setShowActions(!showActions)}
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+            {showActions && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowActions(false)} />
+                <div className="absolute right-0 top-8 z-20 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl py-1 min-w-[120px]">
+                  <button
+                    className="w-full px-3 py-2 text-left text-sm text-white hover:bg-bambu-dark flex items-center gap-2"
+                    onClick={() => { onEdit(); setShowActions(false); }}
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    Edit
+                  </button>
+                  <button
+                    className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-bambu-dark flex items-center gap-2"
+                    onClick={() => { onDelete(); setShowActions(false); }}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                </div>
+              </>
             )}
-            {isArchived && (
-              <span className="text-xs bg-bambu-gray/20 text-bambu-gray px-2 py-0.5 rounded">
-                Archived
-              </span>
-            )}
-            <Button variant="ghost" size="sm" onClick={onEdit} className="p-1">
-              <Edit3 className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onDelete} className="p-1 text-red-400 hover:text-red-300">
-              <Trash2 className="w-4 h-4" />
-            </Button>
           </div>
         </div>
 
-        {/* Progress bar */}
-        {project.target_count && (
-          <div className="mb-3">
-            <div className="flex justify-between text-xs text-bambu-gray mb-1">
-              <span>{project.archive_count} / {project.target_count} prints</span>
-              <span>{progressPercent.toFixed(0)}%</span>
+        {/* Progress section */}
+        {project.target_count ? (
+          <div className="mb-4">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className="text-bambu-gray">Progress</span>
+              <span className={progressPercent >= 100 ? 'text-bambu-green font-medium' : 'text-white'}>
+                {project.archive_count} / {project.target_count}
+              </span>
             </div>
             <div className="h-2 bg-bambu-dark rounded-full overflow-hidden">
               <div
-                className="h-full transition-all duration-300"
+                className="h-full transition-all duration-500 ease-out rounded-full"
                 style={{
                   width: `${Math.min(progressPercent, 100)}%`,
                   backgroundColor: progressPercent >= 100 ? '#22c55e' : project.color || '#6b7280',
                 }}
               />
             </div>
+            <div className="text-right text-xs text-bambu-gray/60 mt-1">
+              {progressPercent.toFixed(0)}% complete
+            </div>
           </div>
-        )}
+        ) : null}
 
-        {/* Archive thumbnails */}
+        {/* Archive thumbnails grid */}
         {project.archives && project.archives.length > 0 && (
-          <div className="mb-3">
-            <div className="flex gap-2">
-              {project.archives.slice(0, 5).map((archive) => (
-                <a
+          <div className="mb-4">
+            <div className="flex gap-1.5">
+              {project.archives.slice(0, 4).map((archive) => (
+                <div
                   key={archive.id}
-                  href={`/archives?search=${encodeURIComponent(archive.print_name || '')}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="relative w-14 h-14 rounded-lg bg-bambu-dark flex-shrink-0 overflow-hidden border border-bambu-dark-tertiary hover:border-bambu-green transition-colors"
+                  className="relative w-12 h-12 rounded-lg bg-bambu-dark flex-shrink-0 overflow-hidden border border-bambu-dark-tertiary"
                   title={archive.print_name || 'Unknown'}
                 >
                   {archive.thumbnail_path ? (
@@ -249,43 +351,49 @@ function ProjectCard({ project, onClick, onEdit, onDelete }: ProjectCardProps) {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-bambu-gray">
-                      <Package className="w-6 h-6" />
+                    <div className="w-full h-full flex items-center justify-center text-bambu-gray/50">
+                      <Package className="w-5 h-5" />
                     </div>
                   )}
                   {archive.status === 'failed' && (
-                    <div className="absolute inset-0 bg-red-500/40 flex items-center justify-center">
-                      <span className="text-white text-xs font-bold">✗</span>
+                    <div className="absolute inset-0 bg-red-500/50 flex items-center justify-center">
+                      <AlertTriangle className="w-4 h-4 text-white" />
                     </div>
                   )}
-                </a>
+                </div>
               ))}
-              {project.archive_count > 5 && (
-                <div className="w-14 h-14 rounded-lg bg-bambu-dark flex-shrink-0 flex items-center justify-center text-sm text-bambu-gray border border-bambu-dark-tertiary">
-                  +{project.archive_count - 5}
+              {project.archive_count > 4 && (
+                <div className="w-12 h-12 rounded-lg bg-bambu-dark flex-shrink-0 flex items-center justify-center text-xs text-bambu-gray border border-bambu-dark-tertiary">
+                  +{project.archive_count - 4}
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* Stats */}
-        <div className="flex items-center gap-4 text-sm text-bambu-gray">
-          <div className="flex items-center gap-1" title="Archives">
-            <Archive className="w-4 h-4" />
-            <span>{project.archive_count}</span>
+        {/* Stats footer */}
+        <div className="flex items-center justify-between pt-3 border-t border-bambu-dark-tertiary">
+          <div className="flex items-center gap-4 text-xs text-bambu-gray">
+            <div className="flex items-center gap-1.5" title="Completed prints">
+              <Archive className="w-3.5 h-3.5" />
+              <span>{project.archive_count}</span>
+            </div>
+            {project.queue_count > 0 && (
+              <div className="flex items-center gap-1.5 text-blue-400" title="In queue">
+                <ListTodo className="w-3.5 h-3.5" />
+                <span>{project.queue_count}</span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-1" title="Queued">
-            <ListTodo className="w-4 h-4" />
-            <span>{project.queue_count}</span>
-          </div>
+          <ChevronRight className="w-4 h-4 text-bambu-gray/50 group-hover:text-bambu-gray transition-colors" />
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
 export function ProjectsPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [showModal, setShowModal] = useState(false);
@@ -350,8 +458,8 @@ export function ProjectsPage() {
   };
 
   const handleClick = (project: ProjectListItem) => {
-    // Open edit modal when clicking on card
-    handleEdit(project);
+    // Navigate to project detail page
+    navigate(`/projects/${project.id}`);
   };
 
   const handleDeleteClick = (id: number) => {
@@ -364,54 +472,95 @@ export function ProjectsPage() {
     }
   };
 
+  // Count projects by status for filter badges
+  const projectCounts = projects?.reduce((acc, p) => {
+    acc[p.status] = (acc[p.status] || 0) + 1;
+    acc.all = (acc.all || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>) || {};
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <FolderKanban className="w-6 h-6 text-bambu-green" />
-          <h1 className="text-2xl font-bold text-white">Projects</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <div className="p-2 bg-bambu-green/10 rounded-lg">
+              <FolderKanban className="w-6 h-6 text-bambu-green" />
+            </div>
+            Projects
+          </h1>
+          <p className="text-sm text-bambu-gray mt-1 ml-14">
+            Organize and track your 3D printing projects
+          </p>
         </div>
-        <Button onClick={() => setShowModal(true)}>
+        <Button onClick={() => setShowModal(true)} className="sm:w-auto w-full">
           <Plus className="w-4 h-4 mr-2" />
           New Project
         </Button>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-2">
-        {['active', 'completed', 'archived', 'all'].map((status) => (
+      {/* Filter tabs */}
+      <div className="flex gap-1 p-1 bg-bambu-dark rounded-xl w-fit">
+        {[
+          { key: 'active', label: 'Active', icon: Clock },
+          { key: 'completed', label: 'Completed', icon: CheckCircle2 },
+          { key: 'archived', label: 'Archived', icon: Archive },
+          { key: 'all', label: 'All', icon: FolderKanban },
+        ].map(({ key, label, icon: Icon }) => (
           <button
-            key={status}
-            onClick={() => setStatusFilter(status)}
-            className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
-              statusFilter === status
-                ? 'bg-bambu-green text-white'
-                : 'bg-bambu-card text-bambu-gray hover:bg-bambu-gray/20'
+            key={key}
+            onClick={() => setStatusFilter(key)}
+            className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-all ${
+              statusFilter === key
+                ? 'bg-bambu-card text-white shadow-sm'
+                : 'text-bambu-gray hover:text-white'
             }`}
           >
-            {status.charAt(0).toUpperCase() + status.slice(1)}
+            <Icon className="w-4 h-4" />
+            <span>{label}</span>
+            {projectCounts[key] > 0 && (
+              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                statusFilter === key ? 'bg-bambu-green/20 text-bambu-green' : 'bg-bambu-dark-tertiary'
+              }`}>
+                {projectCounts[key]}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
       {/* Content */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-bambu-green" />
+        <div className="flex items-center justify-center py-20">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-bambu-green" />
+            <p className="text-sm text-bambu-gray">Loading projects...</p>
+          </div>
         </div>
       ) : projects?.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <FolderKanban className="w-12 h-12 text-bambu-gray/50 mx-auto mb-4" />
-            <p className="text-bambu-gray">No projects found</p>
-            <p className="text-bambu-gray/70 text-sm mt-1">
-              Create a project to group related prints together
-            </p>
-          </CardContent>
-        </Card>
+        <div className="flex flex-col items-center justify-center py-20 px-4">
+          <div className="p-4 bg-bambu-dark rounded-2xl mb-4">
+            <FolderKanban className="w-12 h-12 text-bambu-gray/50" />
+          </div>
+          <h3 className="text-lg font-medium text-white mb-2">
+            {statusFilter === 'all' ? 'No projects yet' : `No ${statusFilter} projects`}
+          </h3>
+          <p className="text-bambu-gray text-center max-w-md mb-6">
+            {statusFilter === 'all'
+              ? 'Create your first project to start organizing related prints, tracking progress, and managing your builds.'
+              : `You don't have any ${statusFilter} projects. Projects will appear here when their status changes.`
+            }
+          </p>
+          {statusFilter === 'all' && (
+            <Button onClick={() => setShowModal(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Create Your First Project
+            </Button>
+          )}
+        </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
           {projects?.map((project) => (
             <ProjectCard
               key={project.id}

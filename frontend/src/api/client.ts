@@ -106,12 +106,16 @@ export interface PrinterStatus {
   temperatures: {
     bed?: number;
     bed_target?: number;
+    bed_heating?: boolean;  // Actual heater state from MQTT
     nozzle?: number;
     nozzle_target?: number;
+    nozzle_heating?: boolean;  // Actual heater state from MQTT
     nozzle_2?: number;  // Second nozzle for H2 series (dual nozzle)
     nozzle_2_target?: number;
+    nozzle_2_heating?: boolean;  // Actual heater state from MQTT
     chamber?: number;
     chamber_target?: number;
+    chamber_heating?: boolean;  // Actual heater state from MQTT
   } | null;
   cover_url: string | null;
   hms_errors: HMSError[];
@@ -329,6 +333,20 @@ export interface ProjectStats {
   total_print_time_hours: number;
   total_filament_grams: number;
   progress_percent: number | null;
+  estimated_cost: number;
+  total_energy_kwh: number;
+  total_energy_cost: number;
+  remaining_prints: number | null;
+  bom_total_items: number;
+  bom_completed_items: number;
+}
+
+export interface ProjectChildPreview {
+  id: number;
+  name: string;
+  color: string | null;
+  status: string;
+  progress_percent: number | null;
 }
 
 export interface Project {
@@ -338,9 +356,27 @@ export interface Project {
   color: string | null;
   status: string;  // active, completed, archived
   target_count: number | null;
+  notes: string | null;
+  attachments: ProjectAttachment[] | null;
+  tags: string | null;
+  due_date: string | null;
+  priority: string;  // low, normal, high, urgent
+  budget: number | null;
+  is_template: boolean;
+  template_source_id: number | null;
+  parent_id: number | null;
+  parent_name: string | null;
+  children: ProjectChildPreview[];
   created_at: string;
   updated_at: string;
   stats?: ProjectStats;
+}
+
+export interface ProjectAttachment {
+  filename: string;
+  original_name: string;
+  size: number;
+  uploaded_at: string;
 }
 
 export interface ArchivePreview {
@@ -369,6 +405,12 @@ export interface ProjectCreate {
   description?: string;
   color?: string;
   target_count?: number;
+  notes?: string;
+  tags?: string;
+  due_date?: string;
+  priority?: string;
+  budget?: number;
+  parent_id?: number;
 }
 
 export interface ProjectUpdate {
@@ -377,6 +419,55 @@ export interface ProjectUpdate {
   color?: string;
   status?: string;
   target_count?: number;
+  notes?: string;
+  tags?: string;
+  due_date?: string;
+  priority?: string;
+  budget?: number;
+  parent_id?: number;
+}
+
+// BOM Types
+export interface BOMItem {
+  id: number;
+  project_id: number;
+  name: string;
+  quantity_needed: number;
+  quantity_printed: number;
+  archive_id: number | null;
+  archive_name: string | null;
+  stl_filename: string | null;
+  notes: string | null;
+  sort_order: number;
+  is_complete: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BOMItemCreate {
+  name: string;
+  quantity_needed?: number;
+  archive_id?: number;
+  stl_filename?: string;
+  notes?: string;
+}
+
+export interface BOMItemUpdate {
+  name?: string;
+  quantity_needed?: number;
+  quantity_printed?: number;
+  archive_id?: number;
+  stl_filename?: string;
+  notes?: string;
+}
+
+// Timeline Types
+export interface TimelineEvent {
+  event_type: string;
+  timestamp: string;
+  title: string;
+  description: string | null;
+  metadata: Record<string, unknown> | null;
 }
 
 // API Key types
@@ -1122,8 +1213,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
-  deletePrinter: (id: number) =>
-    request<void>(`/printers/${id}`, { method: 'DELETE' }),
+  deletePrinter: (id: number, deleteArchives: boolean = true) =>
+    request<{ status: string; archives_deleted: boolean }>(
+      `/printers/${id}?delete_archives=${deleteArchives}`,
+      { method: 'DELETE' }
+    ),
   getPrinterStatus: (id: number) =>
     request<PrinterStatus>(`/printers/${id}/status`),
   connectPrinter: (id: number) =>
@@ -1820,6 +1914,14 @@ export const api = {
       `/maintenance/printers/${printerId}/hours?total_hours=${totalHours}`,
       { method: 'PATCH' }
     ),
+  assignMaintenanceType: (printerId: number, typeId: number) =>
+    request<MaintenanceStatus>(`/maintenance/printers/${printerId}/assign/${typeId}`, {
+      method: 'POST',
+    }),
+  removeMaintenanceItem: (itemId: number) =>
+    request<{ status: string }>(`/maintenance/items/${itemId}`, {
+      method: 'DELETE',
+    }),
 
   // Camera
   getCameraStreamUrl: (printerId: number, fps = 10) =>
@@ -1902,6 +2004,64 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ queue_item_ids: queueItemIds }),
     }),
+
+  // Project Attachments
+  uploadProjectAttachment: async (projectId: number, file: File): Promise<{
+    status: string;
+    filename: string;
+    original_name: string;
+    attachments: ProjectAttachment[];
+  }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE}/projects/${projectId}/attachments`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
+  getProjectAttachmentUrl: (projectId: number, filename: string) =>
+    `${API_BASE}/projects/${projectId}/attachments/${encodeURIComponent(filename)}`,
+  deleteProjectAttachment: (projectId: number, filename: string) =>
+    request<{ status: string; message: string; attachments: ProjectAttachment[] | null }>(
+      `/projects/${projectId}/attachments/${encodeURIComponent(filename)}`,
+      { method: 'DELETE' }
+    ),
+
+  // BOM (Bill of Materials)
+  getProjectBOM: (projectId: number) =>
+    request<BOMItem[]>(`/projects/${projectId}/bom`),
+  createBOMItem: (projectId: number, data: BOMItemCreate) =>
+    request<BOMItem>(`/projects/${projectId}/bom`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateBOMItem: (projectId: number, itemId: number, data: BOMItemUpdate) =>
+    request<BOMItem>(`/projects/${projectId}/bom/${itemId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteBOMItem: (projectId: number, itemId: number) =>
+    request<{ status: string; message: string }>(`/projects/${projectId}/bom/${itemId}`, {
+      method: 'DELETE',
+    }),
+
+  // Templates
+  getTemplates: () => request<ProjectListItem[]>('/projects/templates/'),
+  createTemplateFromProject: (projectId: number) =>
+    request<Project>(`/projects/${projectId}/create-template`, { method: 'POST' }),
+  createProjectFromTemplate: (templateId: number, name?: string) =>
+    request<Project>(`/projects/from-template/${templateId}${name ? `?name=${encodeURIComponent(name)}` : ''}`, {
+      method: 'POST',
+    }),
+
+  // Timeline
+  getProjectTimeline: (projectId: number, limit = 50) =>
+    request<TimelineEvent[]>(`/projects/${projectId}/timeline?limit=${limit}`),
 
   // API Keys
   getAPIKeys: () => request<APIKey[]>('/api-keys/'),

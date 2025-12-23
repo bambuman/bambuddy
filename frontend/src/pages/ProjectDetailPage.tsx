@@ -1,0 +1,1016 @@
+import { useState, useRef } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowLeft,
+  Edit3,
+  Loader2,
+  Package,
+  Clock,
+  CheckCircle,
+  XCircle,
+  ListTodo,
+  Printer,
+  ChevronRight,
+  FileText,
+  Tag,
+  Calendar,
+  AlertTriangle,
+  Save,
+  X,
+  Paperclip,
+  Upload,
+  Download,
+  Trash2,
+  File,
+  DollarSign,
+  ClipboardList,
+  Plus,
+  History,
+  FolderTree,
+  Copy,
+  Layers,
+} from 'lucide-react';
+import { api } from '../api/client';
+import type { Archive, ProjectUpdate, BOMItem, BOMItemCreate } from '../api/client';
+import { Card, CardContent } from '../components/Card';
+import { Button } from '../components/Button';
+import { useToast } from '../contexts/ToastContext';
+import { RichTextEditor } from '../components/RichTextEditor';
+
+// Project edit modal (reused from ProjectsPage)
+import { ProjectModal } from './ProjectsPage';
+
+function formatDuration(hours: number): string {
+  if (hours < 1) {
+    return `${Math.round(hours * 60)}m`;
+  }
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatFilament(grams: number): string {
+  if (grams >= 1000) {
+    return `${(grams / 1000).toFixed(2)}kg`;
+  }
+  return `${Math.round(grams)}g`;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const colors = {
+    active: 'bg-bambu-green/20 text-bambu-green',
+    completed: 'bg-blue-500/20 text-blue-400',
+    archived: 'bg-bambu-gray/20 text-bambu-gray',
+  };
+  const color = colors[status as keyof typeof colors] || colors.active;
+
+  return (
+    <span className={`px-2 py-1 rounded text-sm font-medium ${color}`}>
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </span>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  subValue,
+  color = 'text-bambu-gray',
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string | number;
+  subValue?: string;
+  color?: string;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-3">
+          <div className={`p-2 rounded-lg bg-bambu-dark ${color}`}>
+            <Icon className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-sm text-bambu-gray">{label}</p>
+            <p className="text-xl font-semibold text-white">{value}</p>
+            {subValue && <p className="text-xs text-bambu-gray/70">{subValue}</p>}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ArchiveGrid({ archives }: { archives: Archive[] }) {
+  if (archives.length === 0) {
+    return (
+      <div className="text-center py-8 text-bambu-gray">
+        <Package className="w-12 h-12 mx-auto mb-2 opacity-50" />
+        <p>No prints in this project yet</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+      {archives.map((archive) => (
+        <Link
+          key={archive.id}
+          to={`/archives?search=${encodeURIComponent(archive.print_name || '')}`}
+          className="group relative aspect-square rounded-lg bg-bambu-dark border border-bambu-dark-tertiary overflow-hidden hover:border-bambu-green transition-colors"
+        >
+          {archive.thumbnail_path ? (
+            <img
+              src={`/api/v1/archives/${archive.id}/thumbnail`}
+              alt={archive.print_name || 'Print'}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-bambu-gray">
+              <Package className="w-8 h-8" />
+            </div>
+          )}
+
+          {/* Status overlay */}
+          {archive.status === 'failed' && (
+            <div className="absolute inset-0 bg-red-500/30 flex items-center justify-center">
+              <XCircle className="w-8 h-8 text-white" />
+            </div>
+          )}
+          {archive.status === 'completed' && (
+            <div className="absolute top-1 right-1">
+              <CheckCircle className="w-4 h-4 text-bambu-green" />
+            </div>
+          )}
+
+          {/* Name overlay on hover */}
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <p className="text-xs text-white truncate">{archive.print_name || 'Unknown'}</p>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function PriorityBadge({ priority }: { priority: string }) {
+  const config = {
+    low: { color: 'bg-gray-500/20 text-gray-400', label: 'Low' },
+    normal: { color: 'bg-blue-500/20 text-blue-400', label: 'Normal' },
+    high: { color: 'bg-orange-500/20 text-orange-400', label: 'High' },
+    urgent: { color: 'bg-red-500/20 text-red-400', label: 'Urgent' },
+  };
+  const { color, label } = config[priority as keyof typeof config] || config.normal;
+
+  return (
+    <span className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${color}`}>
+      {priority === 'urgent' && <AlertTriangle className="w-3 h-3" />}
+      {label}
+    </span>
+  );
+}
+
+function formatDate(dateString: string | null): string {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function getDueDateStatus(dateString: string | null): { color: string; label: string } | null {
+  if (!dateString) return null;
+  const dueDate = new Date(dateString);
+  const now = new Date();
+  const diffDays = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0) return { color: 'text-red-400', label: 'Overdue' };
+  if (diffDays === 0) return { color: 'text-orange-400', label: 'Due today' };
+  if (diffDays <= 3) return { color: 'text-yellow-400', label: `${diffDays} days left` };
+  return { color: 'text-bambu-gray', label: `${diffDays} days left` };
+}
+
+export function ProjectDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesContent, setNotesContent] = useState('');
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const projectId = parseInt(id || '0', 10);
+
+  const { data: project, isLoading: projectLoading, error: projectError } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => api.getProject(projectId),
+    enabled: projectId > 0,
+  });
+
+  const { data: archives, isLoading: archivesLoading } = useQuery({
+    queryKey: ['project-archives', projectId],
+    queryFn: () => api.getProjectArchives(projectId),
+    enabled: projectId > 0,
+  });
+
+  const { data: bomItems, isLoading: bomLoading } = useQuery({
+    queryKey: ['project-bom', projectId],
+    queryFn: () => api.getProjectBOM(projectId),
+    enabled: projectId > 0,
+  });
+
+  const { data: timeline, isLoading: timelineLoading } = useQuery({
+    queryKey: ['project-timeline', projectId],
+    queryFn: () => api.getProjectTimeline(projectId, 20),
+    enabled: projectId > 0,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: ProjectUpdate) => api.updateProject(projectId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      setShowEditModal(false);
+      setEditingNotes(false);
+      showToast('Project updated', 'success');
+    },
+    onError: (error: Error) => {
+      showToast(error.message, 'error');
+    },
+  });
+
+  const handleStartEditNotes = () => {
+    setNotesContent(project?.notes || '');
+    setEditingNotes(true);
+  };
+
+  const handleSaveNotes = () => {
+    updateMutation.mutate({ notes: notesContent });
+  };
+
+  const handleCancelNotes = () => {
+    setEditingNotes(false);
+    setNotesContent('');
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingAttachment(true);
+    try {
+      await api.uploadProjectAttachment(projectId, file);
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      showToast('Attachment uploaded', 'success');
+    } catch (error) {
+      showToast((error as Error).message, 'error');
+    } finally {
+      setUploadingAttachment(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleDeleteAttachment = async (filename: string) => {
+    if (!confirm('Delete this attachment?')) return;
+
+    try {
+      await api.deleteProjectAttachment(projectId, filename);
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      showToast('Attachment deleted', 'success');
+    } catch (error) {
+      showToast((error as Error).message, 'error');
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // BOM handlers
+  const [newBomName, setNewBomName] = useState('');
+  const [newBomQty, setNewBomQty] = useState(1);
+
+  const createBomMutation = useMutation({
+    mutationFn: (data: BOMItemCreate) => api.createBOMItem(projectId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-bom', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      setNewBomName('');
+      setNewBomQty(1);
+      showToast('BOM item added', 'success');
+    },
+    onError: (error: Error) => showToast(error.message, 'error'),
+  });
+
+  const updateBomMutation = useMutation({
+    mutationFn: ({ itemId, data }: { itemId: number; data: { quantity_printed: number } }) =>
+      api.updateBOMItem(projectId, itemId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-bom', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+    },
+    onError: (error: Error) => showToast(error.message, 'error'),
+  });
+
+  const deleteBomMutation = useMutation({
+    mutationFn: (itemId: number) => api.deleteBOMItem(projectId, itemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-bom', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      showToast('BOM item deleted', 'success');
+    },
+    onError: (error: Error) => showToast(error.message, 'error'),
+  });
+
+  const handleAddBomItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBomName.trim()) return;
+    createBomMutation.mutate({ name: newBomName.trim(), quantity_needed: newBomQty });
+  };
+
+  const handleIncrementPrinted = (item: BOMItem) => {
+    updateBomMutation.mutate({
+      itemId: item.id,
+      data: { quantity_printed: item.quantity_printed + 1 },
+    });
+  };
+
+  const handleDeleteBomItem = (itemId: number) => {
+    if (confirm('Delete this BOM item?')) {
+      deleteBomMutation.mutate(itemId);
+    }
+  };
+
+  // Template handlers
+  const createTemplateMutation = useMutation({
+    mutationFn: () => api.createTemplateFromProject(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      showToast('Template created', 'success');
+    },
+    onError: (error: Error) => showToast(error.message, 'error'),
+  });
+
+  const formatTimelineDate = (timestamp: string) => {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  if (projectLoading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="w-8 h-8 animate-spin text-bambu-green" />
+      </div>
+    );
+  }
+
+  if (projectError || !project) {
+    return (
+      <div className="text-center py-24">
+        <p className="text-bambu-gray">
+          {projectError ? `Error: ${(projectError as Error).message}` : 'Project not found'}
+        </p>
+        <Button variant="secondary" className="mt-4" onClick={() => navigate('/projects')}>
+          Back to Projects
+        </Button>
+      </div>
+    );
+  }
+
+  const stats = project.stats;
+  const progressPercent = stats?.progress_percent ?? 0;
+  const successRate = stats && stats.total_archives > 0
+    ? ((stats.completed_prints / stats.total_archives) * 100).toFixed(0)
+    : null;
+
+  return (
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-bambu-gray">
+        <Link to="/projects" className="hover:text-white transition-colors">
+          Projects
+        </Link>
+        <ChevronRight className="w-4 h-4" />
+        <span className="text-white">{project.name}</span>
+      </div>
+
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/projects')}
+            className="p-2 rounded-lg bg-bambu-card hover:bg-bambu-dark-tertiary transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-bambu-gray" />
+          </button>
+          <div className="flex items-center gap-3">
+            <div
+              className="w-4 h-4 rounded-full flex-shrink-0"
+              style={{ backgroundColor: project.color || '#6b7280' }}
+            />
+            <div>
+              <h1 className="text-2xl font-bold text-white">{project.name}</h1>
+              {project.description && (
+                <p className="text-bambu-gray mt-1">{project.description}</p>
+              )}
+            </div>
+          </div>
+          <StatusBadge status={project.status} />
+        </div>
+        <Button onClick={() => setShowEditModal(true)}>
+          <Edit3 className="w-4 h-4 mr-2" />
+          Edit
+        </Button>
+      </div>
+
+      {/* Progress bar (if target set) */}
+      {project.target_count && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-bambu-gray">Progress</span>
+              <span className="text-sm font-medium text-white">
+                {stats?.completed_prints || 0} / {project.target_count} prints
+              </span>
+            </div>
+            <div className="h-3 bg-bambu-dark rounded-full overflow-hidden">
+              <div
+                className="h-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(progressPercent, 100)}%`,
+                  backgroundColor: progressPercent >= 100 ? '#22c55e' : project.color || '#6b7280',
+                }}
+              />
+            </div>
+            <div className="flex justify-between mt-1">
+              <span className="text-xs text-bambu-gray/70">
+                {progressPercent.toFixed(0)}% complete
+              </span>
+              {project.target_count - (stats?.completed_prints || 0) > 0 && (
+                <span className="text-xs text-bambu-gray/70">
+                  {project.target_count - (stats?.completed_prints || 0)} remaining
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Stats grid */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard
+            icon={Package}
+            label="Total Prints"
+            value={stats.total_archives}
+            subValue={successRate ? `${successRate}% success rate` : undefined}
+            color="text-bambu-green"
+          />
+          <StatCard
+            icon={CheckCircle}
+            label="Completed"
+            value={stats.completed_prints}
+            subValue={stats.failed_prints > 0 ? `${stats.failed_prints} failed` : undefined}
+            color="text-blue-400"
+          />
+          <StatCard
+            icon={Clock}
+            label="Print Time"
+            value={formatDuration(stats.total_print_time_hours)}
+            color="text-yellow-400"
+          />
+          <StatCard
+            icon={Printer}
+            label="Filament Used"
+            value={formatFilament(stats.total_filament_grams)}
+            color="text-purple-400"
+          />
+        </div>
+      )}
+
+      {/* Cost tracking */}
+      {stats && (stats.estimated_cost > 0 || project.budget) && (
+        <Card>
+          <CardContent className="p-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-3">
+              <DollarSign className="w-5 h-5" />
+              Cost Tracking
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <p className="text-xs text-bambu-gray uppercase">Filament Cost</p>
+                <p className="text-lg font-semibold text-white">
+                  ${stats.estimated_cost.toFixed(2)}
+                </p>
+              </div>
+              {stats.total_energy_kwh > 0 && (
+                <div>
+                  <p className="text-xs text-bambu-gray uppercase">Energy</p>
+                  <p className="text-lg font-semibold text-white">
+                    {stats.total_energy_kwh.toFixed(2)} kWh
+                    {stats.total_energy_cost > 0 && (
+                      <span className="text-sm text-bambu-gray ml-1">
+                        (${stats.total_energy_cost.toFixed(2)})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              )}
+              {project.budget && (
+                <>
+                  <div>
+                    <p className="text-xs text-bambu-gray uppercase">Budget</p>
+                    <p className="text-lg font-semibold text-white">${project.budget.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-bambu-gray uppercase">Remaining</p>
+                    <p className={`text-lg font-semibold ${project.budget - stats.estimated_cost >= 0 ? 'text-bambu-green' : 'text-red-400'}`}>
+                      ${(project.budget - stats.estimated_cost).toFixed(2)}
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Sub-projects */}
+      {project.children && project.children.length > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-3">
+              <FolderTree className="w-5 h-5" />
+              Sub-projects ({project.children.length})
+            </h2>
+            <div className="space-y-2">
+              {project.children.map((child) => (
+                <Link
+                  key={child.id}
+                  to={`/projects/${child.id}`}
+                  className="flex items-center justify-between p-3 bg-bambu-dark rounded-lg hover:bg-bambu-dark-tertiary transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: child.color || '#6b7280' }}
+                    />
+                    <span className="text-white">{child.name}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      child.status === 'completed' ? 'bg-bambu-green/20 text-bambu-green' :
+                      child.status === 'archived' ? 'bg-bambu-gray/20 text-bambu-gray' :
+                      'bg-blue-500/20 text-blue-400'
+                    }`}>
+                      {child.status}
+                    </span>
+                  </div>
+                  {child.progress_percent !== null && (
+                    <span className="text-sm text-bambu-gray">
+                      {child.progress_percent.toFixed(0)}%
+                    </span>
+                  )}
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Parent project link */}
+      {project.parent_id && project.parent_name && (
+        <div className="flex items-center gap-2 text-sm">
+          <Layers className="w-4 h-4 text-bambu-gray" />
+          <span className="text-bambu-gray">Part of:</span>
+          <Link
+            to={`/projects/${project.parent_id}`}
+            className="text-bambu-green hover:underline"
+          >
+            {project.parent_name}
+          </Link>
+        </div>
+      )}
+
+      {/* Meta info row - Tags, Due Date, Priority */}
+      {(project.tags || project.due_date || project.priority !== 'normal') && (
+        <div className="flex flex-wrap items-center gap-4">
+          {/* Priority */}
+          {project.priority && project.priority !== 'normal' && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-bambu-gray uppercase">Priority:</span>
+              <PriorityBadge priority={project.priority} />
+            </div>
+          )}
+
+          {/* Due Date */}
+          {project.due_date && (
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-bambu-gray" />
+              <span className="text-sm text-white">{formatDate(project.due_date)}</span>
+              {getDueDateStatus(project.due_date) && (
+                <span className={`text-xs ${getDueDateStatus(project.due_date)!.color}`}>
+                  ({getDueDateStatus(project.due_date)!.label})
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Tags */}
+          {project.tags && (
+            <div className="flex items-center gap-2">
+              <Tag className="w-4 h-4 text-bambu-gray" />
+              <div className="flex flex-wrap gap-1">
+                {project.tags.split(',').map((tag, index) => (
+                  <span
+                    key={index}
+                    className="px-2 py-0.5 bg-bambu-dark-tertiary text-bambu-gray text-xs rounded"
+                  >
+                    {tag.trim()}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Notes section */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Notes
+            </h2>
+            {!editingNotes ? (
+              <Button variant="secondary" size="sm" onClick={handleStartEditNotes}>
+                <Edit3 className="w-4 h-4 mr-1" />
+                Edit
+              </Button>
+            ) : (
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleCancelNotes}
+                  disabled={updateMutation.isPending}
+                >
+                  <X className="w-4 h-4 mr-1" />
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSaveNotes}
+                  disabled={updateMutation.isPending}
+                >
+                  {updateMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-1" />
+                  )}
+                  Save
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {editingNotes ? (
+            <RichTextEditor
+              content={notesContent}
+              onChange={setNotesContent}
+              placeholder="Add notes about this project..."
+            />
+          ) : project.notes ? (
+            <div
+              className="prose prose-invert prose-sm max-w-none"
+              dangerouslySetInnerHTML={{ __html: project.notes }}
+            />
+          ) : (
+            <p className="text-bambu-gray/70 text-sm italic">
+              No notes yet. Click Edit to add notes.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Attachments section */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Paperclip className="w-5 h-5" />
+              Attachments ({project.attachments?.length || 0})
+            </h2>
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingAttachment}
+              >
+                {uploadingAttachment ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                ) : (
+                  <Upload className="w-4 h-4 mr-1" />
+                )}
+                Upload
+              </Button>
+            </div>
+          </div>
+
+          {project.attachments && project.attachments.length > 0 ? (
+            <div className="space-y-2">
+              {project.attachments.map((attachment) => (
+                <div
+                  key={attachment.filename}
+                  className="flex items-center justify-between p-3 bg-bambu-dark rounded-lg"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <File className="w-5 h-5 text-bambu-gray flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-white truncate">
+                        {attachment.original_name}
+                      </p>
+                      <p className="text-xs text-bambu-gray">
+                        {formatFileSize(attachment.size)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <a
+                      href={api.getProjectAttachmentUrl(projectId, attachment.filename)}
+                      download={attachment.original_name}
+                      className="p-2 rounded hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray hover:text-white"
+                      title="Download"
+                    >
+                      <Download className="w-4 h-4" />
+                    </a>
+                    <button
+                      onClick={() => handleDeleteAttachment(attachment.filename)}
+                      className="p-2 rounded hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray hover:text-red-400"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-bambu-gray/70 text-sm italic">
+              No attachments. Upload STL files, reference images, or other documents.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* BOM Section */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <ClipboardList className="w-5 h-5" />
+              Bill of Materials
+              {stats && stats.bom_total_items > 0 && (
+                <span className="text-sm font-normal text-bambu-gray">
+                  ({stats.bom_completed_items}/{stats.bom_total_items} complete)
+                </span>
+              )}
+            </h2>
+          </div>
+
+          {/* Add BOM item form */}
+          <form onSubmit={handleAddBomItem} className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={newBomName}
+              onChange={(e) => setNewBomName(e.target.value)}
+              className="flex-1 bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+              placeholder="Part name..."
+            />
+            <input
+              type="number"
+              value={newBomQty}
+              onChange={(e) => setNewBomQty(parseInt(e.target.value) || 1)}
+              className="w-20 bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-bambu-green"
+              min="1"
+            />
+            <Button type="submit" size="sm" disabled={!newBomName.trim() || createBomMutation.isPending}>
+              {createBomMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Plus className="w-4 h-4" />
+              )}
+            </Button>
+          </form>
+
+          {bomLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-6 h-6 animate-spin text-bambu-green" />
+            </div>
+          ) : bomItems && bomItems.length > 0 ? (
+            <div className="space-y-2">
+              {bomItems.map((item) => (
+                <div
+                  key={item.id}
+                  className={`flex items-center justify-between p-3 rounded-lg ${
+                    item.is_complete ? 'bg-bambu-green/10' : 'bg-bambu-dark'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <button
+                      onClick={() => handleIncrementPrinted(item)}
+                      disabled={updateBomMutation.isPending}
+                      className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
+                        item.is_complete
+                          ? 'bg-bambu-green border-bambu-green text-white'
+                          : 'border-bambu-gray hover:border-bambu-green'
+                      }`}
+                    >
+                      {item.is_complete && <CheckCircle className="w-4 h-4" />}
+                    </button>
+                    <div className="min-w-0">
+                      <p className={`text-sm ${item.is_complete ? 'text-bambu-gray line-through' : 'text-white'}`}>
+                        {item.name}
+                      </p>
+                      <p className="text-xs text-bambu-gray">
+                        {item.quantity_printed} / {item.quantity_needed} printed
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleIncrementPrinted(item)}
+                      disabled={updateBomMutation.isPending}
+                      className="px-2 py-1 text-xs bg-bambu-dark-tertiary rounded hover:bg-bambu-green/20 text-bambu-gray hover:text-white transition-colors"
+                    >
+                      +1
+                    </button>
+                    <button
+                      onClick={() => handleDeleteBomItem(item.id)}
+                      className="p-1 rounded hover:bg-bambu-dark-tertiary text-bambu-gray hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-bambu-gray/70 text-sm italic">
+              No parts in the bill of materials. Add parts to track what needs to be printed.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Timeline Section */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <History className="w-5 h-5" />
+              Activity Timeline
+            </h2>
+          </div>
+
+          {timelineLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-6 h-6 animate-spin text-bambu-green" />
+            </div>
+          ) : timeline && timeline.length > 0 ? (
+            <div className="space-y-3">
+              {timeline.slice(0, 10).map((event, index) => (
+                <div key={index} className="flex gap-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    event.event_type === 'print_completed' ? 'bg-bambu-green/20 text-bambu-green' :
+                    event.event_type === 'print_failed' ? 'bg-red-500/20 text-red-400' :
+                    event.event_type === 'print_started' ? 'bg-yellow-500/20 text-yellow-400' :
+                    'bg-bambu-dark-tertiary text-bambu-gray'
+                  }`}>
+                    {event.event_type === 'print_completed' && <CheckCircle className="w-4 h-4" />}
+                    {event.event_type === 'print_failed' && <XCircle className="w-4 h-4" />}
+                    {event.event_type === 'print_started' && <Printer className="w-4 h-4" />}
+                    {event.event_type === 'queued' && <ListTodo className="w-4 h-4" />}
+                    {event.event_type === 'project_created' && <Plus className="w-4 h-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white">{event.title}</p>
+                    {event.description && (
+                      <p className="text-xs text-bambu-gray truncate">{event.description}</p>
+                    )}
+                    <p className="text-xs text-bambu-gray/70">{formatTimelineDate(event.timestamp)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-bambu-gray/70 text-sm italic">
+              No activity yet.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Template action */}
+      {!project.is_template && (
+        <div className="flex justify-end">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => createTemplateMutation.mutate()}
+            disabled={createTemplateMutation.isPending}
+          >
+            {createTemplateMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            ) : (
+              <Copy className="w-4 h-4 mr-2" />
+            )}
+            Save as Template
+          </Button>
+        </div>
+      )}
+
+      {/* Queue section */}
+      {stats && (stats.queued_prints > 0 || stats.in_progress_prints > 0) && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <ListTodo className="w-5 h-5" />
+                Queue
+              </h2>
+              <Link
+                to={`/queue?project=${projectId}`}
+                className="text-sm text-bambu-green hover:underline"
+              >
+                View all
+              </Link>
+            </div>
+            <div className="flex items-center gap-4 text-sm">
+              {stats.in_progress_prints > 0 && (
+                <span className="text-yellow-400">
+                  {stats.in_progress_prints} printing
+                </span>
+              )}
+              {stats.queued_prints > 0 && (
+                <span className="text-bambu-gray">
+                  {stats.queued_prints} queued
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Archives section */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Package className="w-5 h-5" />
+            Prints ({archives?.length || 0})
+          </h2>
+        </div>
+        {archivesLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin text-bambu-green" />
+          </div>
+        ) : (
+          <ArchiveGrid archives={archives || []} />
+        )}
+      </div>
+
+      {/* Edit Modal */}
+      {showEditModal && (
+        <ProjectModal
+          project={{
+            ...project,
+            archive_count: stats?.total_archives || 0,
+            queue_count: stats?.queued_prints || 0,
+            progress_percent: stats?.progress_percent || null,
+            archives: [],
+          }}
+          onClose={() => setShowEditModal(false)}
+          onSave={(data) => updateMutation.mutate(data as ProjectUpdate)}
+          isLoading={updateMutation.isPending}
+        />
+      )}
+    </div>
+  );
+}

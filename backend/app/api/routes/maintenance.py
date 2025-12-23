@@ -231,6 +231,11 @@ async def _get_printer_maintenance_internal(
             last_performed_at = item.last_performed_at
             item_id = item.id
         else:
+            # Only auto-create maintenance items for system types
+            # Custom types need to be manually assigned per printer
+            if not maint_type.is_system:
+                continue
+
             # Create default entry for this printer/type
             item = PrinterMaintenance(
                 printer_id=printer_id,
@@ -373,6 +378,75 @@ async def update_printer_maintenance(
     return item
 
 
+@router.post("/printers/{printer_id}/assign/{type_id}", response_model=PrinterMaintenanceResponse)
+async def assign_maintenance_type(
+    printer_id: int,
+    type_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign a maintenance type to a specific printer (for custom types)."""
+    # Verify printer exists
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+
+    # Verify maintenance type exists
+    result = await db.execute(select(MaintenanceType).where(MaintenanceType.id == type_id))
+    maint_type = result.scalar_one_or_none()
+    if not maint_type:
+        raise HTTPException(status_code=404, detail="Maintenance type not found")
+
+    # Check if already assigned
+    result = await db.execute(
+        select(PrinterMaintenance).where(
+            PrinterMaintenance.printer_id == printer_id,
+            PrinterMaintenance.maintenance_type_id == type_id,
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Maintenance type already assigned to this printer")
+
+    # Create the assignment
+    item = PrinterMaintenance(
+        printer_id=printer_id,
+        maintenance_type_id=type_id,
+        enabled=True,
+        last_performed_hours=0.0,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+
+    return item
+
+
+@router.delete("/items/{item_id}")
+async def remove_maintenance_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a maintenance item (unassign a custom type from a printer)."""
+    result = await db.execute(
+        select(PrinterMaintenance)
+        .where(PrinterMaintenance.id == item_id)
+        .options(selectinload(PrinterMaintenance.maintenance_type))
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Maintenance item not found")
+
+    # Only allow removing custom (non-system) types
+    if item.maintenance_type.is_system:
+        raise HTTPException(status_code=400, detail="Cannot remove system maintenance types")
+
+    await db.delete(item)
+    await db.commit()
+
+    return {"status": "removed"}
+
+
 @router.post("/items/{item_id}/perform", response_model=MaintenanceStatus)
 async def perform_maintenance(
     item_id: int,
@@ -497,11 +571,10 @@ async def set_printer_hours(
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
 
-    # Get current archive hours
+    # Get current archive hours (all prints, not just completed)
+    # Must match get_printer_total_hours() which includes all prints
     result = await db.execute(
-        select(func.sum(PrintArchive.print_time_seconds))
-        .where(PrintArchive.printer_id == printer_id)
-        .where(PrintArchive.status == "completed")
+        select(func.sum(PrintArchive.print_time_seconds)).where(PrintArchive.printer_id == printer_id)
     )
     total_seconds = result.scalar() or 0
     archive_hours = total_seconds / 3600.0

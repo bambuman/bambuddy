@@ -1,21 +1,35 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+import os
+import uuid
+from datetime import datetime
+from pathlib import Path
 
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy import case, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
-from backend.app.models.project import Project
 from backend.app.models.archive import PrintArchive
 from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.project import Project
+from backend.app.models.project_bom import ProjectBOMItem
 from backend.app.schemas.project import (
-    ProjectCreate,
-    ProjectUpdate,
-    ProjectResponse,
-    ProjectListResponse,
-    ProjectStats,
+    ArchivePreview,
     BatchAddArchives,
     BatchAddQueueItems,
-    ArchivePreview,
+    BOMItemCreate,
+    BOMItemResponse,
+    BOMItemUpdate,
+    ProjectChildPreview,
+    ProjectCreate,
+    ProjectListResponse,
+    ProjectResponse,
+    ProjectStats,
+    ProjectUpdate,
+    TimelineEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,21 +37,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-async def compute_project_stats(
-    db: AsyncSession, project_id: int, target_count: int | None = None
-) -> ProjectStats:
+async def compute_project_stats(db: AsyncSession, project_id: int, target_count: int | None = None) -> ProjectStats:
     """Compute statistics for a project."""
     # Count total archives
-    total_result = await db.execute(
-        select(func.count(PrintArchive.id)).where(PrintArchive.project_id == project_id)
-    )
+    total_result = await db.execute(select(func.count(PrintArchive.id)).where(PrintArchive.project_id == project_id))
     total_archives = total_result.scalar() or 0
 
     # Count completed archives
     completed_result = await db.execute(
         select(func.count(PrintArchive.id)).where(
-            PrintArchive.project_id == project_id,
-            PrintArchive.status == "completed"
+            PrintArchive.project_id == project_id, PrintArchive.status == "completed"
         )
     )
     completed_prints = completed_result.scalar() or 0
@@ -45,17 +54,19 @@ async def compute_project_stats(
     # Count failed archives
     failed_result = await db.execute(
         select(func.count(PrintArchive.id)).where(
-            PrintArchive.project_id == project_id,
-            PrintArchive.status == "failed"
+            PrintArchive.project_id == project_id, PrintArchive.status == "failed"
         )
     )
     failed_prints = failed_result.scalar() or 0
 
-    # Sum print time and filament
+    # Sum print time, filament, and energy
     sums_result = await db.execute(
         select(
             func.coalesce(func.sum(PrintArchive.print_time_seconds), 0).label("total_time"),
             func.coalesce(func.sum(PrintArchive.filament_used_grams), 0).label("total_filament"),
+            func.coalesce(func.sum(PrintArchive.cost), 0).label("total_filament_cost"),
+            func.coalesce(func.sum(PrintArchive.energy_kwh), 0).label("total_energy"),
+            func.coalesce(func.sum(PrintArchive.energy_cost), 0).label("total_energy_cost"),
         ).where(PrintArchive.project_id == project_id)
     )
     sums = sums_result.first()
@@ -63,8 +74,7 @@ async def compute_project_stats(
     # Count queued items
     queued_result = await db.execute(
         select(func.count(PrintQueueItem.id)).where(
-            PrintQueueItem.project_id == project_id,
-            PrintQueueItem.status == "pending"
+            PrintQueueItem.project_id == project_id, PrintQueueItem.status == "pending"
         )
     )
     queued_prints = queued_result.scalar() or 0
@@ -72,16 +82,28 @@ async def compute_project_stats(
     # Count in-progress items
     in_progress_result = await db.execute(
         select(func.count(PrintQueueItem.id)).where(
-            PrintQueueItem.project_id == project_id,
-            PrintQueueItem.status == "printing"
+            PrintQueueItem.project_id == project_id, PrintQueueItem.status == "printing"
         )
     )
     in_progress_prints = in_progress_result.scalar() or 0
 
     # Calculate progress
     progress_percent = None
+    remaining_prints = None
     if target_count and target_count > 0:
         progress_percent = round((completed_prints / target_count) * 100, 1)
+        remaining_prints = max(0, target_count - completed_prints)
+
+    # BOM stats
+    bom_result = await db.execute(
+        select(
+            func.count(ProjectBOMItem.id).label("total"),
+            func.sum(case((ProjectBOMItem.quantity_printed >= ProjectBOMItem.quantity_needed, 1), else_=0)).label(
+                "completed"
+            ),
+        ).where(ProjectBOMItem.project_id == project_id)
+    )
+    bom_stats = bom_result.first()
 
     return ProjectStats(
         total_archives=total_archives,
@@ -92,6 +114,12 @@ async def compute_project_stats(
         total_print_time_hours=round((sums.total_time or 0) / 3600, 2),
         total_filament_grams=round(sums.total_filament or 0, 2),
         progress_percent=progress_percent,
+        estimated_cost=round((sums.total_filament_cost or 0), 2),
+        total_energy_kwh=round((sums.total_energy or 0), 3),
+        total_energy_cost=round((sums.total_energy_cost or 0), 2),
+        remaining_prints=remaining_prints,
+        bom_total_items=bom_stats.total or 0,
+        bom_completed_items=int(bom_stats.completed or 0),
     )
 
 
@@ -115,9 +143,7 @@ async def list_projects(
     for project in projects:
         # Get archive count
         archive_count_result = await db.execute(
-            select(func.count(PrintArchive.id)).where(
-                PrintArchive.project_id == project.id
-            )
+            select(func.count(PrintArchive.id)).where(PrintArchive.project_id == project.id)
         )
         archive_count = archive_count_result.scalar() or 0
 
@@ -186,11 +212,26 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new project."""
+    # Verify parent exists if specified
+    parent_name = None
+    if data.parent_id:
+        parent_result = await db.execute(select(Project).where(Project.id == data.parent_id))
+        parent = parent_result.scalar_one_or_none()
+        if not parent:
+            raise HTTPException(status_code=400, detail="Parent project not found")
+        parent_name = parent.name
+
     project = Project(
         name=data.name,
         description=data.description,
         color=data.color,
         target_count=data.target_count,
+        notes=data.notes,
+        tags=data.tags,
+        due_date=data.due_date,
+        priority=data.priority,
+        budget=data.budget,
+        parent_id=data.parent_id,
     )
     db.add(project)
     await db.flush()
@@ -205,10 +246,170 @@ async def create_project(
         color=project.color,
         status=project.status,
         target_count=project.target_count,
+        notes=project.notes,
+        attachments=project.attachments,
+        tags=project.tags,
+        due_date=project.due_date,
+        priority=project.priority,
+        budget=project.budget,
+        is_template=project.is_template,
+        template_source_id=project.template_source_id,
+        parent_id=project.parent_id,
+        parent_name=parent_name,
+        children=[],
         created_at=project.created_at,
         updated_at=project.updated_at,
         stats=stats,
     )
+
+
+# ============ Phase 8: Template Endpoints (Static routes BEFORE dynamic {project_id}) ============
+
+
+@router.get("/templates", response_model=list[ProjectListResponse])
+async def list_templates(
+    db: AsyncSession = Depends(get_db),
+):
+    """List all project templates."""
+    result = await db.execute(select(Project).where(Project.is_template.is_(True)).order_by(Project.name))
+    templates = result.scalars().all()
+
+    response = []
+    for project in templates:
+        # Get archive count
+        archive_count_result = await db.execute(
+            select(func.count(PrintArchive.id)).where(PrintArchive.project_id == project.id)
+        )
+        archive_count = archive_count_result.scalar() or 0
+
+        response.append(
+            ProjectListResponse(
+                id=project.id,
+                name=project.name,
+                description=project.description,
+                color=project.color,
+                status=project.status,
+                target_count=project.target_count,
+                created_at=project.created_at,
+                archive_count=archive_count,
+                queue_count=0,
+                progress_percent=None,
+                archives=[],
+            )
+        )
+
+    return response
+
+
+@router.post("/from-template/{template_id}", response_model=ProjectResponse)
+async def create_project_from_template(
+    template_id: int,
+    name: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new project from a template."""
+    result = await db.execute(select(Project).where(Project.id == template_id))
+    template = result.scalar_one_or_none()
+
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if not template.is_template:
+        raise HTTPException(status_code=400, detail="Project is not a template")
+
+    # Create new project
+    project = Project(
+        name=name or template.name.replace(" (Template)", ""),
+        description=template.description,
+        color=template.color,
+        target_count=template.target_count,
+        notes=template.notes,
+        tags=template.tags,
+        priority=template.priority,
+        budget=template.budget,
+        is_template=False,
+        template_source_id=template.id,
+    )
+    db.add(project)
+    await db.flush()
+
+    # Copy BOM items
+    bom_result = await db.execute(select(ProjectBOMItem).where(ProjectBOMItem.project_id == template_id))
+    bom_items = bom_result.scalars().all()
+
+    for item in bom_items:
+        new_item = ProjectBOMItem(
+            project_id=project.id,
+            name=item.name,
+            quantity_needed=item.quantity_needed,
+            quantity_printed=0,
+            stl_filename=item.stl_filename,
+            notes=item.notes,
+            sort_order=item.sort_order,
+        )
+        db.add(new_item)
+
+    await db.flush()
+    await db.refresh(project)
+
+    stats = await compute_project_stats(db, project.id, project.target_count)
+
+    return ProjectResponse(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        color=project.color,
+        status=project.status,
+        target_count=project.target_count,
+        notes=project.notes,
+        attachments=project.attachments,
+        tags=project.tags,
+        due_date=project.due_date,
+        priority=project.priority,
+        budget=project.budget,
+        is_template=project.is_template,
+        template_source_id=project.template_source_id,
+        parent_id=project.parent_id,
+        parent_name=None,
+        children=[],
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+        stats=stats,
+    )
+
+
+# ============ Dynamic {project_id} Routes ============
+
+
+async def get_child_previews(db: AsyncSession, parent_id: int) -> list[ProjectChildPreview]:
+    """Get preview info for child projects."""
+    result = await db.execute(select(Project).where(Project.parent_id == parent_id).order_by(Project.name))
+    children = result.scalars().all()
+
+    previews = []
+    for child in children:
+        # Get completed count for progress
+        completed_result = await db.execute(
+            select(func.count(PrintArchive.id)).where(
+                PrintArchive.project_id == child.id,
+                PrintArchive.status == "completed",
+            )
+        )
+        completed_count = completed_result.scalar() or 0
+        progress = None
+        if child.target_count and child.target_count > 0:
+            progress = round((completed_count / child.target_count) * 100, 1)
+
+        previews.append(
+            ProjectChildPreview(
+                id=child.id,
+                name=child.name,
+                color=child.color,
+                status=child.status,
+                progress_percent=progress,
+            )
+        )
+    return previews
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -223,6 +424,15 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # Get parent name
+    parent_name = None
+    if project.parent_id:
+        parent_result = await db.execute(select(Project.name).where(Project.id == project.parent_id))
+        parent_name = parent_result.scalar()
+
+    # Get children
+    children = await get_child_previews(db, project.id)
+
     stats = await compute_project_stats(db, project.id, project.target_count)
 
     return ProjectResponse(
@@ -232,6 +442,17 @@ async def get_project(
         color=project.color,
         status=project.status,
         target_count=project.target_count,
+        notes=project.notes,
+        attachments=project.attachments,
+        tags=project.tags,
+        due_date=project.due_date,
+        priority=project.priority,
+        budget=project.budget,
+        is_template=project.is_template,
+        template_source_id=project.template_source_id,
+        parent_id=project.parent_id,
+        parent_name=parent_name,
+        children=children,
         created_at=project.created_at,
         updated_at=project.updated_at,
         stats=stats,
@@ -264,9 +485,41 @@ async def update_project(
         project.status = data.status
     if data.target_count is not None:
         project.target_count = data.target_count
+    if data.notes is not None:
+        project.notes = data.notes
+    if data.tags is not None:
+        project.tags = data.tags
+    if data.due_date is not None:
+        project.due_date = data.due_date
+    if data.priority is not None:
+        if data.priority not in ["low", "normal", "high", "urgent"]:
+            raise HTTPException(status_code=400, detail="Invalid priority")
+        project.priority = data.priority
+    if data.budget is not None:
+        project.budget = data.budget
+    if data.parent_id is not None:
+        # Verify parent exists and prevent circular reference
+        if data.parent_id == project_id:
+            raise HTTPException(status_code=400, detail="Project cannot be its own parent")
+        if data.parent_id != 0:  # 0 means remove parent
+            parent_result = await db.execute(select(Project).where(Project.id == data.parent_id))
+            if not parent_result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Parent project not found")
+            project.parent_id = data.parent_id
+        else:
+            project.parent_id = None
 
     await db.flush()
     await db.refresh(project)
+
+    # Get parent name
+    parent_name = None
+    if project.parent_id:
+        parent_result = await db.execute(select(Project.name).where(Project.id == project.parent_id))
+        parent_name = parent_result.scalar()
+
+    # Get children
+    children = await get_child_previews(db, project.id)
 
     stats = await compute_project_stats(db, project.id, project.target_count)
 
@@ -277,6 +530,17 @@ async def update_project(
         color=project.color,
         status=project.status,
         target_count=project.target_count,
+        notes=project.notes,
+        attachments=project.attachments,
+        tags=project.tags,
+        due_date=project.due_date,
+        priority=project.priority,
+        budget=project.budget,
+        is_template=project.is_template,
+        template_source_id=project.template_source_id,
+        parent_id=project.parent_id,
+        parent_name=parent_name,
+        children=children,
         created_at=project.created_at,
         updated_at=project.updated_at,
         stats=stats,
@@ -313,9 +577,10 @@ async def list_project_archives(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Get archives
+    # Get archives with project relationship eagerly loaded
     query = (
         select(PrintArchive)
+        .options(selectinload(PrintArchive.project))
         .where(PrintArchive.project_id == project_id)
         .order_by(PrintArchive.created_at.desc())
         .limit(limit)
@@ -342,11 +607,7 @@ async def list_project_queue(
         raise HTTPException(status_code=404, detail="Project not found")
 
     # Get queue items
-    query = (
-        select(PrintQueueItem)
-        .where(PrintQueueItem.project_id == project_id)
-        .order_by(PrintQueueItem.position)
-    )
+    query = select(PrintQueueItem).where(PrintQueueItem.project_id == project_id).order_by(PrintQueueItem.position)
     result = await db.execute(query)
     items = result.scalars().all()
 
@@ -368,9 +629,7 @@ async def add_archives_to_project(
     # Update archives
     updated = 0
     for archive_id in data.archive_ids:
-        result = await db.execute(
-            select(PrintArchive).where(PrintArchive.id == archive_id)
-        )
+        result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
         archive = result.scalar_one_or_none()
         if archive:
             archive.project_id = project_id
@@ -394,9 +653,7 @@ async def add_queue_items_to_project(
     # Update queue items
     updated = 0
     for item_id in data.queue_item_ids:
-        result = await db.execute(
-            select(PrintQueueItem).where(PrintQueueItem.id == item_id)
-        )
+        result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == item_id))
         item = result.scalar_one_or_none()
         if item:
             item.project_id = project_id
@@ -426,3 +683,495 @@ async def remove_archives_from_project(
             updated += 1
 
     return {"message": f"Removed {updated} archives from project"}
+
+
+def get_project_attachments_dir(project_id: int) -> Path:
+    """Get the attachments directory for a project."""
+    base_dir = Path(settings.archive_dir)
+    return base_dir / "projects" / str(project_id) / "attachments"
+
+
+@router.post("/{project_id}/attachments")
+async def upload_attachment(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload an attachment to a project."""
+    # Verify project exists
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Create attachments directory
+    attachments_dir = get_project_attachments_dir(project_id)
+    attachments_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate unique filename
+    original_name = file.filename or "unknown"
+    ext = os.path.splitext(original_name)[1]
+    unique_filename = f"{uuid.uuid4().hex}{ext}"
+    file_path = attachments_dir / unique_filename
+
+    # Save file
+    try:
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+    except Exception as e:
+        logger.error(f"Failed to save attachment: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save attachment")
+
+    # Update project attachments JSON
+    attachments = project.attachments or []
+    attachments.append(
+        {
+            "filename": unique_filename,
+            "original_name": original_name,
+            "size": len(content),
+            "uploaded_at": datetime.now().isoformat(),
+        }
+    )
+    project.attachments = attachments
+
+    await db.flush()
+    await db.refresh(project)
+
+    return {
+        "status": "success",
+        "filename": unique_filename,
+        "original_name": original_name,
+        "attachments": project.attachments,
+    }
+
+
+@router.get("/{project_id}/attachments/{filename}")
+async def download_attachment(
+    project_id: int,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download an attachment from a project."""
+    # Verify project exists
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Verify attachment exists in project
+    attachments = project.attachments or []
+    attachment = next((a for a in attachments if a.get("filename") == filename), None)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Check file exists
+    file_path = get_project_attachments_dir(project_id) / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Attachment file not found")
+
+    return FileResponse(
+        file_path,
+        filename=attachment.get("original_name", filename),
+        media_type="application/octet-stream",
+    )
+
+
+@router.delete("/{project_id}/attachments/{filename}")
+async def delete_attachment(
+    project_id: int,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an attachment from a project."""
+    # Verify project exists
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Find and remove attachment from list
+    attachments = project.attachments or []
+    attachment = next((a for a in attachments if a.get("filename") == filename), None)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Remove from list
+    attachments = [a for a in attachments if a.get("filename") != filename]
+    project.attachments = attachments if attachments else None
+
+    # Delete file
+    file_path = get_project_attachments_dir(project_id) / filename
+    if file_path.exists():
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete attachment file: {e}")
+
+    await db.flush()
+    await db.refresh(project)
+
+    return {
+        "status": "success",
+        "message": "Attachment deleted",
+        "attachments": project.attachments,
+    }
+
+
+# ============ Phase 7: BOM Endpoints ============
+
+
+@router.get("/{project_id}/bom", response_model=list[BOMItemResponse])
+async def list_bom_items(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List all BOM items for a project."""
+    # Verify project exists
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Get BOM items
+    result = await db.execute(
+        select(ProjectBOMItem)
+        .where(ProjectBOMItem.project_id == project_id)
+        .order_by(ProjectBOMItem.sort_order, ProjectBOMItem.id)
+    )
+    items = result.scalars().all()
+
+    response = []
+    for item in items:
+        # Get archive name if linked
+        archive_name = None
+        if item.archive_id:
+            archive_result = await db.execute(select(PrintArchive.print_name).where(PrintArchive.id == item.archive_id))
+            archive_name = archive_result.scalar()
+
+        response.append(
+            BOMItemResponse(
+                id=item.id,
+                project_id=item.project_id,
+                name=item.name,
+                quantity_needed=item.quantity_needed,
+                quantity_printed=item.quantity_printed,
+                archive_id=item.archive_id,
+                archive_name=archive_name,
+                stl_filename=item.stl_filename,
+                notes=item.notes,
+                sort_order=item.sort_order,
+                is_complete=item.quantity_printed >= item.quantity_needed,
+                created_at=item.created_at,
+                updated_at=item.updated_at,
+            )
+        )
+
+    return response
+
+
+@router.post("/{project_id}/bom", response_model=BOMItemResponse)
+async def create_bom_item(
+    project_id: int,
+    data: BOMItemCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a BOM item to a project."""
+    # Verify project exists
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Get max sort order
+    max_order_result = await db.execute(
+        select(func.max(ProjectBOMItem.sort_order)).where(ProjectBOMItem.project_id == project_id)
+    )
+    max_order = max_order_result.scalar() or 0
+
+    item = ProjectBOMItem(
+        project_id=project_id,
+        name=data.name,
+        quantity_needed=data.quantity_needed,
+        archive_id=data.archive_id,
+        stl_filename=data.stl_filename,
+        notes=data.notes,
+        sort_order=max_order + 1,
+    )
+    db.add(item)
+    await db.flush()
+    await db.refresh(item)
+
+    # Get archive name if linked
+    archive_name = None
+    if item.archive_id:
+        archive_result = await db.execute(select(PrintArchive.print_name).where(PrintArchive.id == item.archive_id))
+        archive_name = archive_result.scalar()
+
+    return BOMItemResponse(
+        id=item.id,
+        project_id=item.project_id,
+        name=item.name,
+        quantity_needed=item.quantity_needed,
+        quantity_printed=item.quantity_printed,
+        archive_id=item.archive_id,
+        archive_name=archive_name,
+        stl_filename=item.stl_filename,
+        notes=item.notes,
+        sort_order=item.sort_order,
+        is_complete=item.quantity_printed >= item.quantity_needed,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+@router.patch("/{project_id}/bom/{item_id}", response_model=BOMItemResponse)
+async def update_bom_item(
+    project_id: int,
+    item_id: int,
+    data: BOMItemUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a BOM item."""
+    result = await db.execute(
+        select(ProjectBOMItem).where(
+            ProjectBOMItem.id == item_id,
+            ProjectBOMItem.project_id == project_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="BOM item not found")
+
+    if data.name is not None:
+        item.name = data.name
+    if data.quantity_needed is not None:
+        item.quantity_needed = data.quantity_needed
+    if data.quantity_printed is not None:
+        item.quantity_printed = data.quantity_printed
+    if data.archive_id is not None:
+        item.archive_id = data.archive_id if data.archive_id != 0 else None
+    if data.stl_filename is not None:
+        item.stl_filename = data.stl_filename if data.stl_filename else None
+    if data.notes is not None:
+        item.notes = data.notes if data.notes else None
+
+    await db.flush()
+    await db.refresh(item)
+
+    # Get archive name if linked
+    archive_name = None
+    if item.archive_id:
+        archive_result = await db.execute(select(PrintArchive.print_name).where(PrintArchive.id == item.archive_id))
+        archive_name = archive_result.scalar()
+
+    return BOMItemResponse(
+        id=item.id,
+        project_id=item.project_id,
+        name=item.name,
+        quantity_needed=item.quantity_needed,
+        quantity_printed=item.quantity_printed,
+        archive_id=item.archive_id,
+        archive_name=archive_name,
+        stl_filename=item.stl_filename,
+        notes=item.notes,
+        sort_order=item.sort_order,
+        is_complete=item.quantity_printed >= item.quantity_needed,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+@router.delete("/{project_id}/bom/{item_id}")
+async def delete_bom_item(
+    project_id: int,
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a BOM item."""
+    result = await db.execute(
+        select(ProjectBOMItem).where(
+            ProjectBOMItem.id == item_id,
+            ProjectBOMItem.project_id == project_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="BOM item not found")
+
+    await db.delete(item)
+
+    return {"status": "success", "message": "BOM item deleted"}
+
+
+@router.post("/{project_id}/create-template", response_model=ProjectResponse)
+async def create_template_from_project(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a template from an existing project."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    source = result.scalar_one_or_none()
+
+    if not source:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Create template
+    template = Project(
+        name=f"{source.name} (Template)",
+        description=source.description,
+        color=source.color,
+        target_count=source.target_count,
+        notes=source.notes,
+        tags=source.tags,
+        priority=source.priority,
+        budget=source.budget,
+        is_template=True,
+        template_source_id=source.id,
+    )
+    db.add(template)
+    await db.flush()
+
+    # Copy BOM items
+    bom_result = await db.execute(select(ProjectBOMItem).where(ProjectBOMItem.project_id == project_id))
+    bom_items = bom_result.scalars().all()
+
+    for item in bom_items:
+        new_item = ProjectBOMItem(
+            project_id=template.id,
+            name=item.name,
+            quantity_needed=item.quantity_needed,
+            quantity_printed=0,
+            stl_filename=item.stl_filename,
+            notes=item.notes,
+            sort_order=item.sort_order,
+        )
+        db.add(new_item)
+
+    await db.flush()
+    await db.refresh(template)
+
+    stats = await compute_project_stats(db, template.id, template.target_count)
+
+    return ProjectResponse(
+        id=template.id,
+        name=template.name,
+        description=template.description,
+        color=template.color,
+        status=template.status,
+        target_count=template.target_count,
+        notes=template.notes,
+        attachments=template.attachments,
+        tags=template.tags,
+        due_date=template.due_date,
+        priority=template.priority,
+        budget=template.budget,
+        is_template=template.is_template,
+        template_source_id=template.template_source_id,
+        parent_id=template.parent_id,
+        parent_name=None,
+        children=[],
+        created_at=template.created_at,
+        updated_at=template.updated_at,
+        stats=stats,
+    )
+
+
+# ============ Phase 9: Timeline Endpoint ============
+
+
+@router.get("/{project_id}/timeline", response_model=list[TimelineEvent])
+async def get_project_timeline(
+    project_id: int,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get timeline of events for a project."""
+    # Verify project exists
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    events = []
+
+    # Project creation event
+    events.append(
+        TimelineEvent(
+            event_type="project_created",
+            timestamp=project.created_at,
+            title="Project created",
+            description=f"Project '{project.name}' was created",
+        )
+    )
+
+    # Get archives and add events
+    archives_result = await db.execute(
+        select(PrintArchive)
+        .where(PrintArchive.project_id == project_id)
+        .order_by(PrintArchive.created_at.desc())
+        .limit(limit)
+    )
+    archives = archives_result.scalars().all()
+
+    for archive in archives:
+        if archive.status == "completed":
+            events.append(
+                TimelineEvent(
+                    event_type="print_completed",
+                    timestamp=archive.completed_at or archive.created_at,
+                    title="Print completed",
+                    description=archive.print_name,
+                    metadata={
+                        "archive_id": archive.id,
+                        "print_time_hours": round((archive.print_time_seconds or 0) / 3600, 2),
+                        "filament_grams": round(archive.filament_used_grams or 0, 1),
+                    },
+                )
+            )
+        elif archive.status == "failed":
+            events.append(
+                TimelineEvent(
+                    event_type="print_failed",
+                    timestamp=archive.completed_at or archive.created_at,
+                    title="Print failed",
+                    description=archive.print_name,
+                    metadata={"archive_id": archive.id},
+                )
+            )
+
+    # Get queue items
+    queue_result = await db.execute(
+        select(PrintQueueItem)
+        .where(PrintQueueItem.project_id == project_id)
+        .order_by(PrintQueueItem.created_at.desc())
+        .limit(limit)
+    )
+    queue_items = queue_result.scalars().all()
+
+    for item in queue_items:
+        if item.status == "printing":
+            events.append(
+                TimelineEvent(
+                    event_type="print_started",
+                    timestamp=item.started_at or item.created_at,
+                    title="Print started",
+                    description=item.print_name,
+                    metadata={"queue_item_id": item.id},
+                )
+            )
+        elif item.status == "pending":
+            events.append(
+                TimelineEvent(
+                    event_type="queued",
+                    timestamp=item.created_at,
+                    title="Added to queue",
+                    description=item.print_name,
+                    metadata={"queue_item_id": item.id},
+                )
+            )
+
+    # Sort by timestamp descending
+    events.sort(key=lambda e: e.timestamp, reverse=True)
+
+    return events[:limit]

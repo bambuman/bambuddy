@@ -1,26 +1,42 @@
 from datetime import datetime
+
 from pydantic import BaseModel
 
 
 class ProjectCreate(BaseModel):
     """Schema for creating a new project."""
+
     name: str
     description: str | None = None
     color: str | None = None
     target_count: int | None = None
+    notes: str | None = None
+    tags: str | None = None
+    due_date: datetime | None = None
+    priority: str = "normal"
+    budget: float | None = None
+    parent_id: int | None = None  # For sub-projects
 
 
 class ProjectUpdate(BaseModel):
     """Schema for updating a project."""
+
     name: str | None = None
     description: str | None = None
     color: str | None = None
     status: str | None = None  # active, completed, archived
     target_count: int | None = None
+    notes: str | None = None
+    tags: str | None = None
+    due_date: datetime | None = None
+    priority: str | None = None
+    budget: float | None = None
+    parent_id: int | None = None
 
 
 class ProjectStats(BaseModel):
     """Statistics for a project."""
+
     total_archives: int = 0
     completed_prints: int = 0
     failed_prints: int = 0
@@ -29,16 +45,46 @@ class ProjectStats(BaseModel):
     total_print_time_hours: float = 0.0
     total_filament_grams: float = 0.0
     progress_percent: float | None = None  # Based on target_count
+    # Cost tracking (Phase 6)
+    estimated_cost: float = 0.0  # Based on filament cost
+    total_energy_kwh: float = 0.0
+    total_energy_cost: float = 0.0
+    remaining_prints: int | None = None  # target_count - completed_prints
+    # BOM stats (Phase 7)
+    bom_total_items: int = 0
+    bom_completed_items: int = 0
+
+
+class ProjectChildPreview(BaseModel):
+    """Minimal project data for child preview."""
+
+    id: int
+    name: str
+    color: str | None
+    status: str
+    progress_percent: float | None = None
 
 
 class ProjectResponse(BaseModel):
     """Schema for project response."""
+
     id: int
     name: str
     description: str | None
     color: str | None
     status: str
     target_count: int | None
+    notes: str | None = None
+    attachments: list | None = None
+    tags: str | None = None
+    due_date: datetime | None = None
+    priority: str = "normal"
+    budget: float | None = None
+    is_template: bool = False
+    template_source_id: int | None = None
+    parent_id: int | None = None
+    parent_name: str | None = None  # For display
+    children: list[ProjectChildPreview] = []
     created_at: datetime
     updated_at: datetime
     stats: ProjectStats | None = None
@@ -49,6 +95,7 @@ class ProjectResponse(BaseModel):
 
 class ArchivePreview(BaseModel):
     """Minimal archive data for project preview."""
+
     id: int
     print_name: str | None
     thumbnail_path: str | None
@@ -57,6 +104,7 @@ class ArchivePreview(BaseModel):
 
 class ProjectListResponse(BaseModel):
     """Schema for project list item (lighter weight)."""
+
     id: int
     name: str
     description: str | None
@@ -77,9 +125,65 @@ class ProjectListResponse(BaseModel):
 
 class BatchAddArchives(BaseModel):
     """Schema for batch adding archives to a project."""
+
     archive_ids: list[int]
 
 
 class BatchAddQueueItems(BaseModel):
     """Schema for batch adding queue items to a project."""
+
     queue_item_ids: list[int]
+
+
+# Phase 7: BOM Schemas
+class BOMItemCreate(BaseModel):
+    """Schema for creating a BOM item."""
+
+    name: str
+    quantity_needed: int = 1
+    archive_id: int | None = None
+    stl_filename: str | None = None
+    notes: str | None = None
+
+
+class BOMItemUpdate(BaseModel):
+    """Schema for updating a BOM item."""
+
+    name: str | None = None
+    quantity_needed: int | None = None
+    quantity_printed: int | None = None
+    archive_id: int | None = None
+    stl_filename: str | None = None
+    notes: str | None = None
+
+
+class BOMItemResponse(BaseModel):
+    """Schema for BOM item response."""
+
+    id: int
+    project_id: int
+    name: str
+    quantity_needed: int
+    quantity_printed: int
+    archive_id: int | None
+    archive_name: str | None = None
+    stl_filename: str | None
+    notes: str | None
+    sort_order: int
+    is_complete: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Phase 9: Timeline Schemas
+class TimelineEvent(BaseModel):
+    """Schema for a timeline event."""
+
+    event_type: str  # archive_added, queue_started, queue_completed, status_changed, note_updated
+    timestamp: datetime
+    title: str
+    description: str | None = None
+    metadata: dict | None = None  # Additional event-specific data

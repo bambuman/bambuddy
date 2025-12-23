@@ -596,6 +596,7 @@ function PrinterCard({
   const navigate = useNavigate();
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteArchives, setDeleteArchives] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
   const [showMQTTDebug, setShowMQTTDebug] = useState(false);
@@ -685,9 +686,11 @@ function PrinterCard({
   const shouldHide = hideIfDisconnected && isConnected === false;
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deletePrinter(printer.id),
+    mutationFn: (options: { deleteArchives: boolean }) =>
+      api.deletePrinter(printer.id, options.deleteArchives),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['printers'] });
+      queryClient.invalidateQueries({ queryKey: ['archives'] });
     },
   });
 
@@ -919,17 +922,64 @@ function PrinterCard({
 
         {/* Delete Confirmation */}
         {showDeleteConfirm && (
-          <ConfirmModal
-            title="Delete Printer"
-            message={`Are you sure you want to delete "${printer.name}"? This will also remove all connection settings.`}
-            confirmText="Delete"
-            variant="danger"
-            onConfirm={() => {
-              deleteMutation.mutate();
-              setShowDeleteConfirm(false);
-            }}
-            onCancel={() => setShowDeleteConfirm(false)}
-          />
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <Card className="w-full max-w-md mx-4">
+              <CardContent>
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="p-2 rounded-full bg-red-500/20">
+                    <AlertTriangle className="w-5 h-5 text-red-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Delete Printer</h3>
+                    <p className="text-sm text-bambu-gray mt-1">
+                      Are you sure you want to delete "{printer.name}"? This will remove all connection settings.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-bambu-dark rounded-lg p-3 mb-4">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={deleteArchives}
+                      onChange={(e) => setDeleteArchives(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 rounded border-bambu-gray bg-bambu-dark-secondary text-bambu-green focus:ring-bambu-green focus:ring-offset-0"
+                    />
+                    <div>
+                      <span className="text-sm text-white">Delete print archives</span>
+                      <p className="text-xs text-bambu-gray mt-0.5">
+                        {deleteArchives
+                          ? 'All print history for this printer will be permanently deleted.'
+                          : 'Print history will be kept but no longer associated with this printer.'}
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setShowDeleteConfirm(false);
+                      setDeleteArchives(true);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() => {
+                      deleteMutation.mutate({ deleteArchives });
+                      setShowDeleteConfirm(false);
+                      setDeleteArchives(true);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* Status */}
@@ -1039,11 +1089,10 @@ function PrinterCard({
 
             {/* Temperatures */}
             {status.temperatures && viewMode === 'expanded' && (() => {
-              // Determine heater states (target > 30°C means heater is actively set)
-              const nozzleHeating = (status.temperatures.nozzle_target || 0) > 30 ||
-                                    (status.temperatures.nozzle_2_target || 0) > 30;
-              const bedHeating = (status.temperatures.bed_target || 0) > 30;
-              const chamberHeating = (status.temperatures.chamber_target || 0) > 30;
+              // Use actual heater states from MQTT stream
+              const nozzleHeating = status.temperatures.nozzle_heating || status.temperatures.nozzle_2_heating || false;
+              const bedHeating = status.temperatures.bed_heating || false;
+              const chamberHeating = status.temperatures.chamber_heating || false;
 
               return (
                 <div className="grid grid-cols-3 gap-3">

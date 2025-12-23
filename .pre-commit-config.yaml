@@ -27,6 +27,7 @@ repos:
         exclude: ^static/
       - id: check-added-large-files
         args: ['--maxkb=1000']
+        exclude: ^static/assets/
       - id: check-merge-conflict
       - id: debug-statements
       - id: detect-private-key

@@ -103,18 +103,37 @@ async def update_printer(
 
 
 @router.delete("/{printer_id}")
-async def delete_printer(printer_id: int, db: AsyncSession = Depends(get_db)):
-    """Delete a printer."""
+async def delete_printer(
+    printer_id: int,
+    delete_archives: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a printer.
+
+    Args:
+        printer_id: ID of the printer to delete
+        delete_archives: If True (default), delete all print archives for this printer.
+                        If False, keep archives but remove their printer association.
+    """
+    from backend.app.models.archive import PrintArchive
+
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
 
     printer_manager.disconnect_printer(printer_id)
+
+    if not delete_archives:
+        # Orphan the archives instead of deleting them
+        from sqlalchemy import update
+
+        await db.execute(update(PrintArchive).where(PrintArchive.printer_id == printer_id).values(printer_id=None))
+
     await db.delete(printer)
     await db.commit()
 
-    return {"status": "deleted"}
+    return {"status": "deleted", "archives_deleted": delete_archives}
 
 
 @router.get("/{printer_id}/status", response_model=PrinterStatus)
