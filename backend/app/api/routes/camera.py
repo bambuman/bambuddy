@@ -15,6 +15,7 @@ from backend.app.services.camera import (
     capture_camera_frame,
     get_camera_port,
     get_ffmpeg_path,
+    is_low_fps_model,
     test_camera_connection,
 )
 
@@ -66,6 +67,11 @@ async def generate_mjpeg_stream(
 
     port = get_camera_port(model)
     camera_url = f"rtsps://bblp:{access_code}@{ip_address}:{port}/streaming/live/1"
+    low_fps = is_low_fps_model(model)
+
+    # For A1/P1 models, use lower FPS and longer timeouts
+    # These models have more limited camera streaming capability
+    effective_fps = min(fps, 5) if low_fps else fps
 
     # ffmpeg command to output MJPEG stream to stdout
     # -rtsp_transport tcp: Use TCP for reliability
@@ -79,19 +85,41 @@ async def generate_mjpeg_stream(
         "tcp",
         "-rtsp_flags",
         "prefer_tcp",
-        "-i",
-        camera_url,
-        "-f",
-        "mjpeg",
-        "-q:v",
-        "5",
-        "-r",
-        str(fps),
-        "-an",  # No audio
-        "-",  # Output to stdout
     ]
 
-    logger.info(f"Starting camera stream for {ip_address} (stream_id={stream_id})")
+    # Add longer timeouts for A1/P1 models which may be slower to respond
+    if low_fps:
+        cmd.extend(
+            [
+                "-timeout",
+                "10000000",  # 10 seconds in microseconds
+                "-stimeout",
+                "10000000",  # Socket timeout
+                "-analyzeduration",
+                "10000000",  # Longer analysis time
+                "-probesize",
+                "5000000",  # Larger probe size
+            ]
+        )
+
+    cmd.extend(
+        [
+            "-i",
+            camera_url,
+            "-f",
+            "mjpeg",
+            "-q:v",
+            "5",
+            "-r",
+            str(effective_fps),
+            "-an",  # No audio
+            "-",  # Output to stdout
+        ]
+    )
+
+    logger.info(f"Starting camera stream for {ip_address} (stream_id={stream_id}, model={model}, fps={effective_fps})")
+    if low_fps:
+        logger.info(f"Using extended timeouts for {model} camera")
     logger.debug(f"ffmpeg command: {ffmpeg} ... (url hidden)")
 
     process = None
@@ -107,7 +135,9 @@ async def generate_mjpeg_stream(
             _active_streams[stream_id] = process
 
         # Give ffmpeg a moment to start and check for immediate failures
-        await asyncio.sleep(0.5)
+        # A1/P1 models may need longer to establish connection
+        startup_wait = 2.0 if low_fps else 0.5
+        await asyncio.sleep(startup_wait)
         if process.returncode is not None:
             stderr = await process.stderr.read()
             logger.error(f"ffmpeg failed immediately: {stderr.decode()}")
@@ -132,7 +162,9 @@ async def generate_mjpeg_stream(
 
             try:
                 # Read chunk from ffmpeg
-                chunk = await asyncio.wait_for(process.stdout.read(8192), timeout=10.0)
+                # A1/P1 models may have longer gaps between frames
+                read_timeout = 30.0 if low_fps else 10.0
+                chunk = await asyncio.wait_for(process.stdout.read(8192), timeout=read_timeout)
 
                 if not chunk:
                     logger.warning("Camera stream ended (no more data)")

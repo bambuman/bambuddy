@@ -6,11 +6,9 @@ Captures images from the printer's RTSPS camera stream using ffmpeg.
 import asyncio
 import logging
 import shutil
-from pathlib import Path
-from datetime import datetime
 import uuid
-
-from backend.app.core.config import settings
+from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +67,19 @@ def get_camera_port(model: str | None) -> int:
     return 6000
 
 
+def is_low_fps_model(model: str | None) -> bool:
+    """Check if printer model has limited camera FPS capability.
+
+    A1 and P1 series have more limited camera streaming compared to X1.
+    They may need lower FPS and longer timeouts.
+    """
+    if model:
+        model_upper = model.upper()
+        if model_upper.startswith(("A1", "P1")):
+            return True
+    return False
+
+
 def build_camera_url(ip_address: str, access_code: str, model: str | None) -> str:
     """Build the RTSPS URL for the printer camera."""
     port = get_camera_port(model)
@@ -114,12 +125,18 @@ async def capture_camera_frame(
     cmd = [
         ffmpeg,
         "-y",  # Overwrite output
-        "-rtsp_transport", "tcp",
-        "-rtsp_flags", "prefer_tcp",
-        "-i", camera_url,
-        "-frames:v", "1",
-        "-update", "1",
-        "-q:v", "2",
+        "-rtsp_transport",
+        "tcp",
+        "-rtsp_flags",
+        "prefer_tcp",
+        "-i",
+        camera_url,
+        "-frames:v",
+        "1",
+        "-update",
+        "1",
+        "-q:v",
+        "2",
         str(output_path),
     ]
 
@@ -134,11 +151,8 @@ async def capture_camera_frame(
         )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except TimeoutError:
             process.kill()
             await process.wait()
             logger.error(f"Camera capture timed out after {timeout}s")
