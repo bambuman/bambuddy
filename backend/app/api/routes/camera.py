@@ -92,9 +92,7 @@ async def generate_mjpeg_stream(
         cmd.extend(
             [
                 "-timeout",
-                "10000000",  # 10 seconds in microseconds
-                "-stimeout",
-                "10000000",  # Socket timeout
+                "10000000",  # 10 seconds in microseconds (replaces deprecated -stimeout)
                 "-analyzeduration",
                 "10000000",  # Longer analysis time
                 "-probesize",
