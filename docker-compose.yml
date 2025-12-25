@@ -2,6 +2,9 @@ services:
   bambuddy:
     build: .
     container_name: bambuddy
+    # OPTIONAL: Host network mode can help if you have camera or printer
+    # discovery issues. Docker's default bridge networking works in most setups.
+    # network_mode: host  # Uncomment this and remove "ports:" below if needed
     ports:
       - "8000:8000"
     volumes:

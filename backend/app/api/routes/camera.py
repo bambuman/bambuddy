@@ -13,9 +13,11 @@ from backend.app.core.database import get_db
 from backend.app.models.printer import Printer
 from backend.app.services.camera import (
     capture_camera_frame,
+    generate_chamber_image_stream,
     get_camera_port,
     get_ffmpeg_path,
-    is_low_fps_model,
+    is_chamber_image_model,
+    read_next_chamber_frame,
     test_camera_connection,
 )
 
@@ -24,6 +26,9 @@ router = APIRouter(prefix="/printers", tags=["camera"])
 
 # Track active ffmpeg processes for cleanup
 _active_streams: dict[str, asyncio.subprocess.Process] = {}
+
+# Track active chamber image connections for cleanup
+_active_chamber_streams: dict[str, tuple] = {}
 
 # Store last frame for each printer (for photo capture from active stream)
 _last_frames: dict[int, bytes] = {}
@@ -46,7 +51,96 @@ async def get_printer_or_404(printer_id: int, db: AsyncSession) -> Printer:
     return printer
 
 
-async def generate_mjpeg_stream(
+async def generate_chamber_mjpeg_stream(
+    ip_address: str,
+    access_code: str,
+    model: str | None,
+    fps: int = 5,
+    stream_id: str | None = None,
+    disconnect_event: asyncio.Event | None = None,
+    printer_id: int | None = None,
+) -> AsyncGenerator[bytes, None]:
+    """Generate MJPEG stream from A1/P1 printer using chamber image protocol.
+
+    This connects to port 6000 and reads JPEG frames using the Bambu binary protocol.
+    """
+    logger.info(f"Starting chamber image stream for {ip_address} (stream_id={stream_id}, model={model})")
+
+    connection = await generate_chamber_image_stream(ip_address, access_code, fps)
+    if connection is None:
+        logger.error(f"Failed to connect to chamber image stream for {ip_address}")
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: text/plain\r\n\r\n"
+            b"Error: Camera connection failed. Check printer is on and camera is enabled.\r\n"
+        )
+        return
+
+    reader, writer = connection
+
+    # Track active connection for cleanup
+    if stream_id:
+        _active_chamber_streams[stream_id] = (reader, writer)
+
+    try:
+        frame_interval = 1.0 / fps if fps > 0 else 0.2
+        last_frame_time = 0.0
+
+        while True:
+            # Check if client disconnected
+            if disconnect_event and disconnect_event.is_set():
+                logger.info(f"Client disconnected, stopping chamber stream {stream_id}")
+                break
+
+            # Read next frame
+            frame = await read_next_chamber_frame(reader, timeout=30.0)
+            if frame is None:
+                logger.warning(f"Chamber image stream ended for {stream_id}")
+                break
+
+            # Save frame to buffer for photo capture
+            if printer_id is not None:
+                _last_frames[printer_id] = frame
+
+            # Rate limiting - skip frames if needed to maintain target FPS
+            current_time = asyncio.get_event_loop().time()
+            if current_time - last_frame_time < frame_interval:
+                continue
+            last_frame_time = current_time
+
+            # Yield frame in MJPEG format
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
+                b"\r\n" + frame + b"\r\n"
+            )
+
+    except asyncio.CancelledError:
+        logger.info(f"Chamber image stream cancelled (stream_id={stream_id})")
+    except GeneratorExit:
+        logger.info(f"Chamber image stream generator exit (stream_id={stream_id})")
+    except Exception as e:
+        logger.exception(f"Chamber image stream error: {e}")
+    finally:
+        # Remove from active streams
+        if stream_id and stream_id in _active_chamber_streams:
+            del _active_chamber_streams[stream_id]
+
+        # Clean up frame buffer
+        if printer_id is not None and printer_id in _last_frames:
+            del _last_frames[printer_id]
+
+        # Close the connection
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+        logger.info(f"Chamber image stream stopped for {ip_address} (stream_id={stream_id})")
+
+
+async def generate_rtsp_mjpeg_stream(
     ip_address: str,
     access_code: str,
     model: str | None,
@@ -55,9 +149,9 @@ async def generate_mjpeg_stream(
     disconnect_event: asyncio.Event | None = None,
     printer_id: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
-    """Generate MJPEG stream from printer camera using ffmpeg.
+    """Generate MJPEG stream from printer camera using ffmpeg/RTSP.
 
-    This captures frames continuously and yields them in MJPEG format.
+    This is for X1/H2/P2 models that support RTSP streaming.
     """
     ffmpeg = get_ffmpeg_path()
     if not ffmpeg:
@@ -67,11 +161,6 @@ async def generate_mjpeg_stream(
 
     port = get_camera_port(model)
     camera_url = f"rtsps://bblp:{access_code}@{ip_address}:{port}/streaming/live/1"
-    low_fps = is_low_fps_model(model)
-
-    # For A1/P1 models, use lower FPS and longer timeouts
-    # These models have more limited camera streaming capability
-    effective_fps = min(fps, 5) if low_fps else fps
 
     # ffmpeg command to output MJPEG stream to stdout
     # -rtsp_transport tcp: Use TCP for reliability
@@ -85,39 +174,19 @@ async def generate_mjpeg_stream(
         "tcp",
         "-rtsp_flags",
         "prefer_tcp",
+        "-i",
+        camera_url,
+        "-f",
+        "mjpeg",
+        "-q:v",
+        "5",
+        "-r",
+        str(fps),
+        "-an",  # No audio
+        "-",  # Output to stdout
     ]
 
-    # Add longer timeouts for A1/P1 models which may be slower to respond
-    if low_fps:
-        cmd.extend(
-            [
-                "-timeout",
-                "10000000",  # 10 seconds in microseconds (replaces deprecated -stimeout)
-                "-analyzeduration",
-                "10000000",  # Longer analysis time
-                "-probesize",
-                "5000000",  # Larger probe size
-            ]
-        )
-
-    cmd.extend(
-        [
-            "-i",
-            camera_url,
-            "-f",
-            "mjpeg",
-            "-q:v",
-            "5",
-            "-r",
-            str(effective_fps),
-            "-an",  # No audio
-            "-",  # Output to stdout
-        ]
-    )
-
-    logger.info(f"Starting camera stream for {ip_address} (stream_id={stream_id}, model={model}, fps={effective_fps})")
-    if low_fps:
-        logger.info(f"Using extended timeouts for {model} camera")
+    logger.info(f"Starting RTSP camera stream for {ip_address} (stream_id={stream_id}, model={model}, fps={fps})")
     logger.debug(f"ffmpeg command: {ffmpeg} ... (url hidden)")
 
     process = None
@@ -133,9 +202,7 @@ async def generate_mjpeg_stream(
             _active_streams[stream_id] = process
 
         # Give ffmpeg a moment to start and check for immediate failures
-        # A1/P1 models may need longer to establish connection
-        startup_wait = 2.0 if low_fps else 0.5
-        await asyncio.sleep(startup_wait)
+        await asyncio.sleep(0.5)
         if process.returncode is not None:
             stderr = await process.stderr.read()
             logger.error(f"ffmpeg failed immediately: {stderr.decode()}")
@@ -160,9 +227,7 @@ async def generate_mjpeg_stream(
 
             try:
                 # Read chunk from ffmpeg
-                # A1/P1 models may have longer gaps between frames
-                read_timeout = 30.0 if low_fps else 10.0
-                chunk = await asyncio.wait_for(process.stdout.read(8192), timeout=read_timeout)
+                chunk = await asyncio.wait_for(process.stdout.read(8192), timeout=10.0)
 
                 if not chunk:
                     logger.warning("Camera stream ended (no more data)")
@@ -260,6 +325,10 @@ async def camera_stream(
     This endpoint returns a multipart MJPEG stream that can be used directly
     in an <img> tag or video player.
 
+    Uses the appropriate protocol based on printer model:
+    - A1/P1: Chamber image protocol (port 6000)
+    - X1/H2/P2: RTSP via ffmpeg (port 322)
+
     Args:
         printer_id: Printer ID
         fps: Target frames per second (default: 10, max: 30)
@@ -268,8 +337,11 @@ async def camera_stream(
 
     printer = await get_printer_or_404(printer_id, db)
 
-    # Validate FPS
-    fps = min(max(fps, 1), 30)
+    # Validate FPS - A1/P1 models max out at ~5 FPS
+    if is_chamber_image_model(printer.model):
+        fps = min(max(fps, 1), 5)
+    else:
+        fps = min(max(fps, 1), 30)
 
     # Generate unique stream ID for tracking
     stream_id = f"{printer_id}-{uuid.uuid4().hex[:8]}"
@@ -277,10 +349,18 @@ async def camera_stream(
     # Create disconnect event that will be set when client disconnects
     disconnect_event = asyncio.Event()
 
+    # Choose the appropriate stream generator based on model
+    if is_chamber_image_model(printer.model):
+        stream_generator = generate_chamber_mjpeg_stream
+        logger.info(f"Using chamber image protocol for {printer.model}")
+    else:
+        stream_generator = generate_rtsp_mjpeg_stream
+        logger.info(f"Using RTSP protocol for {printer.model}")
+
     async def stream_with_disconnect_check():
         """Wrapper generator that monitors for client disconnect."""
         try:
-            async for chunk in generate_mjpeg_stream(
+            async for chunk in stream_generator(
                 ip_address=printer.ip_address,
                 access_code=printer.access_code,
                 model=printer.model,
@@ -325,6 +405,8 @@ async def stop_camera_stream(printer_id: int):
     Accepts both GET and POST (POST for sendBeacon compatibility).
     """
     stopped = 0
+
+    # Stop ffmpeg/RTSP streams
     to_remove = []
     for stream_id, process in list(_active_streams.items()):
         if stream_id.startswith(f"{printer_id}-"):
@@ -340,9 +422,22 @@ async def stop_camera_stream(printer_id: int):
     for stream_id in to_remove:
         _active_streams.pop(stream_id, None)
 
-    logger.info(
-        f"Stopped {stopped} camera stream(s) for printer {printer_id}, active streams remaining: {list(_active_streams.keys())}"
-    )
+    # Stop chamber image streams
+    to_remove_chamber = []
+    for stream_id, (_reader, writer) in list(_active_chamber_streams.items()):
+        if stream_id.startswith(f"{printer_id}-"):
+            to_remove_chamber.append(stream_id)
+            try:
+                writer.close()
+                stopped += 1
+                logger.info(f"Closed chamber image connection for stream {stream_id}")
+            except Exception as e:
+                logger.warning(f"Error stopping chamber stream {stream_id}: {e}")
+
+    for stream_id in to_remove_chamber:
+        _active_chamber_streams.pop(stream_id, None)
+
+    logger.info(f"Stopped {stopped} camera stream(s) for printer {printer_id}")
     return {"stopped": stopped}
 
 
@@ -374,7 +469,10 @@ async def camera_snapshot(
         )
 
         if not success:
-            raise HTTPException(status_code=503, detail="Failed to capture camera frame. Is the printer powered on?")
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to capture camera frame. Ensure printer is on and camera is enabled.",
+            )
 
         # Read and return the image
         with open(temp_path, "rb") as f:
