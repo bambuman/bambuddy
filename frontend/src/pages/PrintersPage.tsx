@@ -1161,9 +1161,9 @@ function PrinterCard({
 
                   return (
                     <div key={ams.id} className="p-2 bg-bambu-dark rounded-lg">
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         {/* Nozzle badge + AMS device icon */}
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 flex-shrink-0">
                           {isDualNozzle && (isLeftNozzle || isRightNozzle) && (
                             <NozzleBadge side={isLeftNozzle ? 'L' : 'R'} />
                           )}
@@ -1190,7 +1190,7 @@ function PrinterCard({
                             {ams.tray.map((tray, i) => (
                               <div key={i} className="flex items-start">
                                 <div className="flex flex-col">
-                                  <span className="text-bambu-gray/70 truncate">
+                                  <span className="text-bambu-gray/70 truncate max-w-[60px] sm:max-w-none">
                                     {tray.tray_type ? (tray.tray_sub_brands || tray.tray_type) : '—'}
                                   </span>
                                   <span className="text-bambu-gray/50 truncate">
@@ -1207,9 +1207,9 @@ function PrinterCard({
                             ))}
                           </div>
                         </div>
-                        {/* Humidity/temp - vertically centered */}
+                        {/* Humidity/temp - responsive positioning */}
                         {(ams.humidity != null || ams.temp != null) && (
-                          <div className="flex items-center gap-2 text-xs flex-shrink-0">
+                          <div className="flex items-center gap-2 text-xs flex-shrink-0 ml-auto">
                             {ams.humidity != null && (
                               <HumidityIndicator
                                 humidity={ams.humidity}

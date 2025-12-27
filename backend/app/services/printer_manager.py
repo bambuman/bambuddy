@@ -288,7 +288,9 @@ def get_derived_status_name(state: PrinterState) -> str | None:
     when the printer is heating before a print starts.
     """
     # If we have a valid calibration stage, use it
-    if state.stg_cur >= 0:
+    # X1 models use -1 for idle, A1/P1 models use 255 for idle
+    # Valid stage numbers are 0-254
+    if 0 <= state.stg_cur < 255:
         return get_stage_name(state.stg_cur)
 
     # If not in RUNNING state, no derived status needed

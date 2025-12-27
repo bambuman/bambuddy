@@ -11,6 +11,7 @@ import pytest
 
 from backend.app.services.printer_manager import (
     PrinterManager,
+    get_derived_status_name,
     init_printer_connections,
     printer_state_to_dict,
 )
@@ -732,6 +733,48 @@ class TestPrinterStateToDict:
         result = printer_state_to_dict(mock_state)
 
         assert result["ams"][0]["is_ams_ht"] is False
+
+
+class TestGetDerivedStatusName:
+    """Tests for get_derived_status_name function."""
+
+    def test_stg_cur_255_returns_none(self):
+        """Verify stg_cur=255 (A1/P1 idle) returns None, not 'Unknown stage (255)'."""
+        state = MagicMock()
+        state.stg_cur = 255
+        state.state = "IDLE"
+
+        result = get_derived_status_name(state)
+
+        assert result is None
+
+    def test_stg_cur_negative_one_returns_none_when_idle(self):
+        """Verify stg_cur=-1 (X1 idle) returns None."""
+        state = MagicMock()
+        state.stg_cur = -1
+        state.state = "IDLE"
+
+        result = get_derived_status_name(state)
+
+        assert result is None
+
+    def test_valid_stage_returns_name(self):
+        """Verify valid stg_cur values return stage name."""
+        state = MagicMock()
+        state.stg_cur = 1  # Auto bed leveling
+
+        result = get_derived_status_name(state)
+
+        assert result == "Auto bed leveling"
+
+    def test_stg_cur_zero_returns_printing(self):
+        """Verify stg_cur=0 returns 'Printing'."""
+        state = MagicMock()
+        state.stg_cur = 0
+
+        result = get_derived_status_name(state)
+
+        assert result == "Printing"
 
 
 class TestInitPrinterConnections:
