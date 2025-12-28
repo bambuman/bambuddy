@@ -98,7 +98,7 @@ async def compute_project_stats(db: AsyncSession, project_id: int, target_count:
     bom_result = await db.execute(
         select(
             func.count(ProjectBOMItem.id).label("total"),
-            func.sum(case((ProjectBOMItem.quantity_printed >= ProjectBOMItem.quantity_needed, 1), else_=0)).label(
+            func.sum(case((ProjectBOMItem.quantity_acquired >= ProjectBOMItem.quantity_needed, 1), else_=0)).label(
                 "completed"
             ),
         ).where(ProjectBOMItem.project_id == project_id)
@@ -183,6 +183,8 @@ async def list_projects(
                 print_name=a.print_name,
                 thumbnail_path=a.thumbnail_path,
                 status=a.status,
+                filament_type=a.filament_type,
+                filament_color=a.filament_color,
             )
             for a in archives
         ]
@@ -342,9 +344,11 @@ async def create_project_from_template(
             project_id=project.id,
             name=item.name,
             quantity_needed=item.quantity_needed,
-            quantity_printed=0,
+            quantity_acquired=0,
+            unit_price=item.unit_price,
+            sourcing_url=item.sourcing_url,
             stl_filename=item.stl_filename,
-            notes=item.notes,
+            remarks=item.remarks,
             sort_order=item.sort_order,
         )
         db.add(new_item)
@@ -691,6 +695,63 @@ def get_project_attachments_dir(project_id: int) -> Path:
     return base_dir / "projects" / str(project_id) / "attachments"
 
 
+# Allowed file extensions for attachments
+ALLOWED_ATTACHMENT_EXTENSIONS = {
+    # Images
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".bmp",
+    ".ico",
+    # Documents
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".odt",
+    ".ods",
+    ".odp",
+    ".txt",
+    ".rtf",
+    ".csv",
+    ".md",
+    # 3D/CAD files
+    ".stl",
+    ".obj",
+    ".3mf",
+    ".step",
+    ".stp",
+    ".iges",
+    ".igs",
+    ".f3d",
+    ".scad",
+    # Archives
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+    # Code/scripts (for Klipper macros, scripts, etc.)
+    ".py",
+    ".sh",
+    ".cfg",
+    ".conf",
+    ".gcode",
+    ".ini",
+    # Other common formats
+    ".json",
+    ".xml",
+    ".yaml",
+    ".yml",
+}
+
+
 @router.post("/{project_id}/attachments")
 async def upload_attachment(
     project_id: int,
@@ -698,19 +759,28 @@ async def upload_attachment(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload an attachment to a project."""
+    logger.info(f"=== UPLOAD START: {file.filename} for project {project_id} ===")
+
     # Verify project exists
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # Validate file extension
+    original_name = file.filename or "unknown"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in ALLOWED_ATTACHMENT_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{ext}' not supported. Allowed: images, PDFs, documents, STL, 3MF, archives.",
+        )
+
     # Create attachments directory
     attachments_dir = get_project_attachments_dir(project_id)
     attachments_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate unique filename
-    original_name = file.filename or "unknown"
-    ext = os.path.splitext(original_name)[1]
     unique_filename = f"{uuid.uuid4().hex}{ext}"
     file_path = attachments_dir / unique_filename
 
@@ -719,30 +789,43 @@ async def upload_attachment(
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
+        logger.info(f"=== FILE SAVED: {file_path}, size: {len(content)} ===")
     except Exception as e:
         logger.error(f"Failed to save attachment: {e}")
         raise HTTPException(status_code=500, detail="Failed to save attachment")
 
     # Update project attachments JSON
-    attachments = project.attachments or []
-    attachments.append(
-        {
-            "filename": unique_filename,
-            "original_name": original_name,
-            "size": len(content),
-            "uploaded_at": datetime.now().isoformat(),
-        }
-    )
+    attachments = list(project.attachments or [])
+    new_attachment = {
+        "filename": unique_filename,
+        "original_name": original_name,
+        "size": len(content),
+        "uploaded_at": datetime.now().isoformat(),
+    }
+    attachments.append(new_attachment)
+
+    # Simple ORM update
     project.attachments = attachments
+    db.add(project)  # Explicitly add to session
+
+    logger.info(f"=== BEFORE COMMIT: {len(attachments)} attachments ===")
 
     await db.flush()
-    await db.refresh(project)
+    await db.commit()
+
+    logger.info("=== AFTER COMMIT ===")
+
+    # Verify by re-querying
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    fresh_project = result.scalar_one()
+
+    logger.info(f"=== VERIFIED: {len(fresh_project.attachments or [])} attachments ===")
 
     return {
         "status": "success",
         "filename": unique_filename,
         "original_name": original_name,
-        "attachments": project.attachments,
+        "attachments": fresh_project.attachments,
     }
 
 
@@ -854,13 +937,15 @@ async def list_bom_items(
                 project_id=item.project_id,
                 name=item.name,
                 quantity_needed=item.quantity_needed,
-                quantity_printed=item.quantity_printed,
+                quantity_acquired=item.quantity_acquired,
+                unit_price=item.unit_price,
+                sourcing_url=item.sourcing_url,
                 archive_id=item.archive_id,
                 archive_name=archive_name,
                 stl_filename=item.stl_filename,
-                notes=item.notes,
+                remarks=item.remarks,
                 sort_order=item.sort_order,
-                is_complete=item.quantity_printed >= item.quantity_needed,
+                is_complete=item.quantity_acquired >= item.quantity_needed,
                 created_at=item.created_at,
                 updated_at=item.updated_at,
             )
@@ -891,9 +976,11 @@ async def create_bom_item(
         project_id=project_id,
         name=data.name,
         quantity_needed=data.quantity_needed,
+        unit_price=data.unit_price,
+        sourcing_url=data.sourcing_url,
         archive_id=data.archive_id,
         stl_filename=data.stl_filename,
-        notes=data.notes,
+        remarks=data.remarks,
         sort_order=max_order + 1,
     )
     db.add(item)
@@ -911,13 +998,15 @@ async def create_bom_item(
         project_id=item.project_id,
         name=item.name,
         quantity_needed=item.quantity_needed,
-        quantity_printed=item.quantity_printed,
+        quantity_acquired=item.quantity_acquired,
+        unit_price=item.unit_price,
+        sourcing_url=item.sourcing_url,
         archive_id=item.archive_id,
         archive_name=archive_name,
         stl_filename=item.stl_filename,
-        notes=item.notes,
+        remarks=item.remarks,
         sort_order=item.sort_order,
-        is_complete=item.quantity_printed >= item.quantity_needed,
+        is_complete=item.quantity_acquired >= item.quantity_needed,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
@@ -946,14 +1035,18 @@ async def update_bom_item(
         item.name = data.name
     if data.quantity_needed is not None:
         item.quantity_needed = data.quantity_needed
-    if data.quantity_printed is not None:
-        item.quantity_printed = data.quantity_printed
+    if data.quantity_acquired is not None:
+        item.quantity_acquired = data.quantity_acquired
+    if data.unit_price is not None:
+        item.unit_price = data.unit_price if data.unit_price != 0 else None
+    if data.sourcing_url is not None:
+        item.sourcing_url = data.sourcing_url if data.sourcing_url else None
     if data.archive_id is not None:
         item.archive_id = data.archive_id if data.archive_id != 0 else None
     if data.stl_filename is not None:
         item.stl_filename = data.stl_filename if data.stl_filename else None
-    if data.notes is not None:
-        item.notes = data.notes if data.notes else None
+    if data.remarks is not None:
+        item.remarks = data.remarks if data.remarks else None
 
     await db.flush()
     await db.refresh(item)
@@ -969,13 +1062,15 @@ async def update_bom_item(
         project_id=item.project_id,
         name=item.name,
         quantity_needed=item.quantity_needed,
-        quantity_printed=item.quantity_printed,
+        quantity_acquired=item.quantity_acquired,
+        unit_price=item.unit_price,
+        sourcing_url=item.sourcing_url,
         archive_id=item.archive_id,
         archive_name=archive_name,
         stl_filename=item.stl_filename,
-        notes=item.notes,
+        remarks=item.remarks,
         sort_order=item.sort_order,
-        is_complete=item.quantity_printed >= item.quantity_needed,
+        is_complete=item.quantity_acquired >= item.quantity_needed,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
@@ -1041,9 +1136,11 @@ async def create_template_from_project(
             project_id=template.id,
             name=item.name,
             quantity_needed=item.quantity_needed,
-            quantity_printed=0,
+            quantity_acquired=0,
+            unit_price=item.unit_price,
+            sourcing_url=item.sourcing_url,
             stl_filename=item.stl_filename,
-            notes=item.notes,
+            remarks=item.remarks,
             sort_order=item.sort_order,
         )
         db.add(new_item)

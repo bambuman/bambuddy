@@ -1,13 +1,17 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.database import Base
 
 
 class ProjectBOMItem(Base):
-    """Bill of Materials item for a project."""
+    """Bill of Materials item for a project.
+
+    Tracks sourced/purchased parts (hardware, electronics, screws, etc.)
+    that need to be acquired for a project.
+    """
 
     __tablename__ = "project_bom_items"
 
@@ -15,16 +19,20 @@ class ProjectBOMItem(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(255))
     quantity_needed: Mapped[int] = mapped_column(Integer, default=1)
-    quantity_printed: Mapped[int] = mapped_column(Integer, default=0)
+    quantity_acquired: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Optional link to archive that prints this part
+    # Sourcing information
+    unit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sourcing_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Optional link to archive (for reference)
     archive_id: Mapped[int | None] = mapped_column(ForeignKey("print_archives.id", ondelete="SET NULL"), nullable=True)
 
-    # Reference to attachment filename (STL file)
+    # Reference to attachment filename
     stl_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Notes about this part
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Remarks about this part
+    remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Sort order
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

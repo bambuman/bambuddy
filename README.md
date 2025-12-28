@@ -97,14 +97,6 @@
 - Print time accuracy stats
 - File manager for printer storage
 
-### 🎛️ Printer Control
-- AMS/AMS-HT temperature & humidity monitoring
-- Chamber temperature & light control
-- Speed profiles & fan controls
-- AI detection modules (spaghetti, first layer)
-- Automated calibration (bed level, vibration)
-- Dual nozzle support
-
 </td>
 </tr>
 </table>

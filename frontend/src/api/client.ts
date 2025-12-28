@@ -384,6 +384,8 @@ export interface ArchivePreview {
   print_name: string | null;
   thumbnail_path: string | null;
   status: string;
+  filament_type: string | null;
+  filament_color: string | null;
 }
 
 export interface ProjectListItem {
@@ -427,17 +429,19 @@ export interface ProjectUpdate {
   parent_id?: number;
 }
 
-// BOM Types
+// BOM Types - Tracks sourced/purchased parts (hardware, electronics, etc.)
 export interface BOMItem {
   id: number;
   project_id: number;
   name: string;
   quantity_needed: number;
-  quantity_printed: number;
+  quantity_acquired: number;
+  unit_price: number | null;
+  sourcing_url: string | null;
   archive_id: number | null;
   archive_name: string | null;
   stl_filename: string | null;
-  notes: string | null;
+  remarks: string | null;
   sort_order: number;
   is_complete: boolean;
   created_at: string;
@@ -447,18 +451,22 @@ export interface BOMItem {
 export interface BOMItemCreate {
   name: string;
   quantity_needed?: number;
+  unit_price?: number;
+  sourcing_url?: string;
   archive_id?: number;
   stl_filename?: string;
-  notes?: string;
+  remarks?: string;
 }
 
 export interface BOMItemUpdate {
   name?: string;
   quantity_needed?: number;
-  quantity_printed?: number;
+  quantity_acquired?: number;
+  unit_price?: number;
+  sourcing_url?: string;
   archive_id?: number;
   stl_filename?: string;
-  notes?: string;
+  remarks?: string;
 }
 
 // Timeline Types
@@ -1572,10 +1580,12 @@ export const api = {
       if (categories.notifications !== undefined) params.set('include_notifications', String(categories.notifications));
       if (categories.templates !== undefined) params.set('include_templates', String(categories.templates));
       if (categories.smart_plugs !== undefined) params.set('include_smart_plugs', String(categories.smart_plugs));
+      if (categories.external_links !== undefined) params.set('include_external_links', String(categories.external_links));
       if (categories.printers !== undefined) params.set('include_printers', String(categories.printers));
       if (categories.filaments !== undefined) params.set('include_filaments', String(categories.filaments));
       if (categories.maintenance !== undefined) params.set('include_maintenance', String(categories.maintenance));
       if (categories.archives !== undefined) params.set('include_archives', String(categories.archives));
+      if (categories.projects !== undefined) params.set('include_projects', String(categories.projects));
       if (categories.access_codes !== undefined) params.set('include_access_codes', String(categories.access_codes));
     }
     const url = `${API_BASE}/settings/backup${params.toString() ? '?' + params.toString() : ''}`;

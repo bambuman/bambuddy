@@ -100,6 +100,8 @@ class ArchivePreview(BaseModel):
     print_name: str | None
     thumbnail_path: str | None
     status: str
+    filament_type: str | None = None
+    filament_color: str | None = None
 
 
 class ProjectListResponse(BaseModel):
@@ -135,15 +137,17 @@ class BatchAddQueueItems(BaseModel):
     queue_item_ids: list[int]
 
 
-# Phase 7: BOM Schemas
+# Phase 7: BOM Schemas - Tracks sourced/purchased parts
 class BOMItemCreate(BaseModel):
     """Schema for creating a BOM item."""
 
     name: str
     quantity_needed: int = 1
+    unit_price: float | None = None
+    sourcing_url: str | None = None
     archive_id: int | None = None
     stl_filename: str | None = None
-    notes: str | None = None
+    remarks: str | None = None
 
 
 class BOMItemUpdate(BaseModel):
@@ -151,10 +155,12 @@ class BOMItemUpdate(BaseModel):
 
     name: str | None = None
     quantity_needed: int | None = None
-    quantity_printed: int | None = None
+    quantity_acquired: int | None = None
+    unit_price: float | None = None
+    sourcing_url: str | None = None
     archive_id: int | None = None
     stl_filename: str | None = None
-    notes: str | None = None
+    remarks: str | None = None
 
 
 class BOMItemResponse(BaseModel):
@@ -164,11 +170,13 @@ class BOMItemResponse(BaseModel):
     project_id: int
     name: str
     quantity_needed: int
-    quantity_printed: int
+    quantity_acquired: int
+    unit_price: float | None
+    sourcing_url: str | None
     archive_id: int | None
     archive_name: str | None = None
     stl_filename: str | None
-    notes: str | None
+    remarks: str | None
     sort_order: int
     is_complete: bool = False
     created_at: datetime

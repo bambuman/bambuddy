@@ -240,13 +240,16 @@ function ProjectCard({ project, onClick, onEdit, onDelete }: ProjectCardProps) {
 
   return (
     <div
-      className="group relative bg-bambu-card rounded-xl border border-bambu-dark-tertiary hover:border-bambu-gray/40 transition-all cursor-pointer overflow-hidden"
+      className="group relative bg-gradient-to-br from-bambu-card to-bambu-dark-secondary rounded-xl border border-bambu-dark-tertiary hover:border-bambu-green/50 hover:shadow-lg hover:shadow-bambu-green/5 transition-all duration-300 cursor-pointer overflow-hidden"
       onClick={onClick}
     >
-      {/* Color accent bar */}
+      {/* Color accent bar with glow */}
       <div
-        className="absolute top-0 left-0 w-1 h-full"
-        style={{ backgroundColor: project.color || '#6b7280' }}
+        className="absolute top-0 left-0 w-1.5 h-full"
+        style={{
+          backgroundColor: project.color || '#6b7280',
+          boxShadow: `0 0 12px ${project.color || '#6b7280'}40`
+        }}
       />
 
       <div className="p-5 pl-6">
@@ -257,8 +260,21 @@ function ProjectCard({ project, onClick, onEdit, onDelete }: ProjectCardProps) {
               <statusConfig.icon className={`w-5 h-5 ${statusConfig.color}`} />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-semibold text-white truncate">{project.name}</h3>
+                {project.target_count ? (
+                  <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap font-medium ${
+                    progressPercent >= 100
+                      ? 'bg-bambu-green/20 text-bambu-green'
+                      : 'bg-bambu-dark text-bambu-gray'
+                  }`}>
+                    {project.archive_count}/{project.target_count} parts
+                  </span>
+                ) : project.archive_count > 0 ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full whitespace-nowrap font-medium bg-bambu-dark text-bambu-gray">
+                    {project.archive_count} print{project.archive_count !== 1 ? 's' : ''}
+                  </span>
+                ) : null}
                 {isCompleted && (
                   <span className="text-xs bg-bambu-green/20 text-bambu-green px-2 py-0.5 rounded-full whitespace-nowrap">
                     Done
@@ -275,6 +291,38 @@ function ProjectCard({ project, onClick, onEdit, onDelete }: ProjectCardProps) {
                   {project.description}
                 </p>
               )}
+              {/* Filament materials/colors */}
+              {project.archives && project.archives.length > 0 && (() => {
+                const materials = [...new Set(project.archives.map(a => a.filament_type).filter(Boolean))];
+                const colors = [...new Set(project.archives.map(a => a.filament_color).filter(Boolean))] as string[];
+                if (materials.length === 0 && colors.length === 0) return null;
+                return (
+                  <div className="flex items-center gap-2 mt-1.5">
+                    {/* Material types as text badges */}
+                    {materials.slice(0, 3).map((mat) => (
+                      <span key={mat} className="text-[10px] px-1.5 py-0.5 bg-bambu-dark text-bambu-gray rounded">
+                        {mat}
+                      </span>
+                    ))}
+                    {/* Colors as swatches */}
+                    {colors.length > 0 && (
+                      <div className="flex items-center gap-0.5">
+                        {colors.slice(0, 5).map((col) => (
+                          <div
+                            key={col}
+                            className="w-3 h-3 rounded-full border border-white/20"
+                            style={{ backgroundColor: col.startsWith('#') ? col : `#${col}` }}
+                            title={col}
+                          />
+                        ))}
+                        {colors.length > 5 && (
+                          <span className="text-[10px] text-bambu-gray ml-0.5">+{colors.length - 5}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -310,38 +358,60 @@ function ProjectCard({ project, onClick, onEdit, onDelete }: ProjectCardProps) {
           </div>
         </div>
 
-        {/* Progress section */}
-        {project.target_count ? (
-          <div className="mb-4">
-            <div className="flex items-center justify-between text-xs mb-2">
-              <span className="text-bambu-gray">Progress</span>
-              <span className={progressPercent >= 100 ? 'text-bambu-green font-medium' : 'text-white'}>
-                {project.archive_count} / {project.target_count}
-              </span>
+        {/* Progress section - show for all projects */}
+        <div className="mb-4">
+          {project.target_count ? (
+            <>
+              <div className="flex items-center justify-between text-xs mb-2">
+                <span className="text-bambu-gray">Progress</span>
+                <span className={progressPercent >= 100 ? 'text-bambu-green font-medium' : 'text-white'}>
+                  {project.archive_count} / {project.target_count}
+                </span>
+              </div>
+              <div className="h-2.5 bg-bambu-dark/80 rounded-full overflow-hidden backdrop-blur-sm">
+                <div
+                  className="h-full transition-all duration-500 ease-out rounded-full relative"
+                  style={{
+                    width: `${Math.min(progressPercent, 100)}%`,
+                    background: progressPercent >= 100
+                      ? 'linear-gradient(90deg, #22c55e, #4ade80)'
+                      : `linear-gradient(90deg, ${project.color || '#6b7280'}, ${project.color || '#6b7280'}cc)`,
+                    boxShadow: `0 0 8px ${progressPercent >= 100 ? '#22c55e' : project.color || '#6b7280'}60`
+                  }}
+                />
+              </div>
+              <div className="text-right text-xs text-bambu-gray/60 mt-1">
+                {progressPercent.toFixed(0)}% complete
+              </div>
+            </>
+          ) : project.archive_count > 0 ? (
+            <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-1.5 text-bambu-gray">
+                <Archive className="w-3.5 h-3.5" />
+                <span>{project.archive_count} print{project.archive_count !== 1 ? 's' : ''} completed</span>
+              </div>
+              {project.queue_count > 0 && (
+                <div className="flex items-center gap-1.5 text-blue-400">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>{project.queue_count} in queue</span>
+                </div>
+              )}
             </div>
-            <div className="h-2 bg-bambu-dark rounded-full overflow-hidden">
-              <div
-                className="h-full transition-all duration-500 ease-out rounded-full"
-                style={{
-                  width: `${Math.min(progressPercent, 100)}%`,
-                  backgroundColor: progressPercent >= 100 ? '#22c55e' : project.color || '#6b7280',
-                }}
-              />
+          ) : (
+            <div className="text-xs text-bambu-gray/60 italic">
+              No prints yet
             </div>
-            <div className="text-right text-xs text-bambu-gray/60 mt-1">
-              {progressPercent.toFixed(0)}% complete
-            </div>
-          </div>
-        ) : null}
+          )}
+        </div>
 
-        {/* Archive thumbnails grid */}
+        {/* Archive thumbnails - compact 4-column grid */}
         {project.archives && project.archives.length > 0 && (
           <div className="mb-4">
-            <div className="flex gap-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
               {project.archives.slice(0, 4).map((archive) => (
                 <div
                   key={archive.id}
-                  className="relative w-12 h-12 rounded-lg bg-bambu-dark flex-shrink-0 overflow-hidden border border-bambu-dark-tertiary"
+                  className="relative aspect-square rounded-lg bg-bambu-dark overflow-hidden border border-bambu-dark-tertiary"
                   title={archive.print_name || 'Unknown'}
                 >
                   {archive.thumbnail_path ? (
@@ -352,22 +422,22 @@ function ProjectCard({ project, onClick, onEdit, onDelete }: ProjectCardProps) {
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-bambu-gray/50">
-                      <Package className="w-5 h-5" />
+                      <Package className="w-6 h-6" />
                     </div>
                   )}
                   {archive.status === 'failed' && (
-                    <div className="absolute inset-0 bg-red-500/50 flex items-center justify-center">
+                    <div className="absolute inset-0 bg-red-500/40 flex items-center justify-center">
                       <AlertTriangle className="w-4 h-4 text-white" />
                     </div>
                   )}
                 </div>
               ))}
-              {project.archive_count > 4 && (
-                <div className="w-12 h-12 rounded-lg bg-bambu-dark flex-shrink-0 flex items-center justify-center text-xs text-bambu-gray border border-bambu-dark-tertiary">
-                  +{project.archive_count - 4}
-                </div>
-              )}
             </div>
+            {project.archive_count > 4 && (
+              <p className="text-xs text-bambu-gray mt-1.5 text-center">
+                +{project.archive_count - 4} more
+              </p>
+            )}
           </div>
         )}
 
@@ -480,17 +550,17 @@ export function ProjectsPage() {
   }, {} as Record<string, number>) || {};
 
   return (
-    <div className="space-y-6">
+    <div className="p-4 md:p-8 space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-            <div className="p-2 bg-bambu-green/10 rounded-lg">
+            <div className="p-2.5 bg-bambu-green/10 rounded-xl">
               <FolderKanban className="w-6 h-6 text-bambu-green" />
             </div>
             Projects
           </h1>
-          <p className="text-sm text-bambu-gray mt-1 ml-14">
+          <p className="text-sm text-bambu-gray mt-2 ml-14">
             Organize and track your 3D printing projects
           </p>
         </div>
@@ -560,7 +630,7 @@ export function ProjectsPage() {
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
           {projects?.map((project) => (
             <ProjectCard
               key={project.id}

@@ -8,13 +8,21 @@ All notable changes to Bambuddy will be documented in this file.
 - **Docker printer discovery** - Subnet scanning for discovering printers when running in Docker with `network_mode: host`. Automatically detects Docker environment and shows subnet input field in Add Printer dialog.
 - **Printer model mapping** - Discovery now shows friendly model names (X1C, H2D, P1S) instead of raw SSDP codes (BL-P001, O1D, C11).
 - **Discovery API tests** - Comprehensive test coverage for discovery endpoints.
+- **Project filament colors** - Project cards now display filament color swatches from assigned archives.
+- **BOM filter** - Hide completed BOM items with "Hide done" toggle on project detail page.
+- **Projects in backup/restore** - Projects, BOM items, and attachments now included in database backup/restore.
+- **Attachment file validation** - File type validation for project attachments (images, documents, 3D files, archives, scripts, configs).
 
 ### Changed
 - **GitHub issue template** - Added mandatory printer firmware version field and LAN-only mode checkbox for better bug reports.
 - **Docker compose** - Clearer comments explaining `network_mode: host` requirement for printer discovery and camera streaming.
+- **Project card design** - Enhanced visual polish with gradients, shadows, and glow effects on hover.
+- **Project page layout** - Improved spacing and padding on project list and detail pages.
+- **Delete confirmations** - Replaced browser confirm dialogs with styled confirmation modals.
 
 ### Fixed
 - **Notification module** - Fixed bug where notifications were sent even when printer was offline.
+- **Attachment uploads** - Fixed file attachments not persisting due to SQLAlchemy JSON column mutation detection.
 
 ## [0.1.5] - 2025-12-19
 

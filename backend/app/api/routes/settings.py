@@ -3,28 +3,28 @@ import json
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, Depends, UploadFile, File, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.config import settings as app_settings
 from backend.app.core.database import get_db
-from backend.app.models.settings import Settings
-from backend.app.models.notification import NotificationProvider
-from backend.app.models.notification_template import NotificationTemplate
-from backend.app.models.smart_plug import SmartPlug
-from backend.app.models.printer import Printer
-from backend.app.models.filament import Filament
-from backend.app.models.maintenance import MaintenanceType, PrinterMaintenance, MaintenanceHistory
 from backend.app.models.archive import PrintArchive
 from backend.app.models.external_link import ExternalLink
+from backend.app.models.filament import Filament
+from backend.app.models.maintenance import MaintenanceType
+from backend.app.models.notification import NotificationProvider
+from backend.app.models.notification_template import NotificationTemplate
+from backend.app.models.printer import Printer
+from backend.app.models.project import Project
+from backend.app.models.project_bom import ProjectBOMItem
+from backend.app.models.settings import Settings
+from backend.app.models.smart_plug import SmartPlug
 from backend.app.schemas.settings import AppSettings, AppSettingsUpdate
 from backend.app.services.printer_manager import printer_manager
-from backend.app.services.spoolman import init_spoolman_client, get_spoolman_client
-
+from backend.app.services.spoolman import init_spoolman_client
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -63,7 +63,14 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     for setting in db_settings:
         if setting.key in settings_dict:
             # Parse the value based on the expected type
-            if setting.key in ["auto_archive", "save_thumbnails", "capture_finish_photo", "spoolman_enabled", "check_updates", "telemetry_enabled"]:
+            if setting.key in [
+                "auto_archive",
+                "save_thumbnails",
+                "capture_finish_photo",
+                "spoolman_enabled",
+                "check_updates",
+                "telemetry_enabled",
+            ]:
                 settings_dict[setting.key] = setting.value.lower() == "true"
             elif setting.key in ["default_filament_cost", "energy_cost_per_kwh", "ams_temp_good", "ams_temp_fair"]:
                 settings_dict[setting.key] = float(setting.value)
@@ -173,6 +180,7 @@ async def export_backup(
     include_filaments: bool = Query(False, description="Include filament inventory"),
     include_maintenance: bool = Query(False, description="Include maintenance types and records"),
     include_archives: bool = Query(False, description="Include print archive metadata"),
+    include_projects: bool = Query(False, description="Include projects with BOM items"),
     include_access_codes: bool = Query(False, description="Include printer access codes (security risk!)"),
 ):
     """Export selected data as JSON backup."""
@@ -195,27 +203,29 @@ async def export_backup(
         providers = result.scalars().all()
         backup["notification_providers"] = []
         for p in providers:
-            backup["notification_providers"].append({
-                "name": p.name,
-                "provider_type": p.provider_type,
-                "enabled": p.enabled,
-                "config": json.loads(p.config) if isinstance(p.config, str) else p.config,
-                "on_print_start": p.on_print_start,
-                "on_print_complete": p.on_print_complete,
-                "on_print_failed": p.on_print_failed,
-                "on_print_stopped": p.on_print_stopped,
-                "on_print_progress": p.on_print_progress,
-                "on_printer_offline": p.on_printer_offline,
-                "on_printer_error": p.on_printer_error,
-                "on_filament_low": p.on_filament_low,
-                "on_maintenance_due": p.on_maintenance_due,
-                "quiet_hours_enabled": p.quiet_hours_enabled,
-                "quiet_hours_start": p.quiet_hours_start,
-                "quiet_hours_end": p.quiet_hours_end,
-                "daily_digest_enabled": getattr(p, 'daily_digest_enabled', False),
-                "daily_digest_time": getattr(p, 'daily_digest_time', None),
-                "printer_id": getattr(p, 'printer_id', None),
-            })
+            backup["notification_providers"].append(
+                {
+                    "name": p.name,
+                    "provider_type": p.provider_type,
+                    "enabled": p.enabled,
+                    "config": json.loads(p.config) if isinstance(p.config, str) else p.config,
+                    "on_print_start": p.on_print_start,
+                    "on_print_complete": p.on_print_complete,
+                    "on_print_failed": p.on_print_failed,
+                    "on_print_stopped": p.on_print_stopped,
+                    "on_print_progress": p.on_print_progress,
+                    "on_printer_offline": p.on_printer_offline,
+                    "on_printer_error": p.on_printer_error,
+                    "on_filament_low": p.on_filament_low,
+                    "on_maintenance_due": p.on_maintenance_due,
+                    "quiet_hours_enabled": p.quiet_hours_enabled,
+                    "quiet_hours_start": p.quiet_hours_start,
+                    "quiet_hours_end": p.quiet_hours_end,
+                    "daily_digest_enabled": getattr(p, "daily_digest_enabled", False),
+                    "daily_digest_time": getattr(p, "daily_digest_time", None),
+                    "printer_id": getattr(p, "printer_id", None),
+                }
+            )
         backup["included"].append("notification_providers")
 
     # Notification templates
@@ -224,13 +234,15 @@ async def export_backup(
         templates = result.scalars().all()
         backup["notification_templates"] = []
         for t in templates:
-            backup["notification_templates"].append({
-                "event_type": t.event_type,
-                "name": t.name,
-                "title_template": t.title_template,
-                "body_template": t.body_template,
-                "is_default": t.is_default,
-            })
+            backup["notification_templates"].append(
+                {
+                    "event_type": t.event_type,
+                    "name": t.name,
+                    "title_template": t.title_template,
+                    "body_template": t.body_template,
+                    "is_default": t.is_default,
+                }
+            )
         backup["included"].append("notification_templates")
 
     # Smart plugs
@@ -239,25 +251,27 @@ async def export_backup(
         plugs = result.scalars().all()
         backup["smart_plugs"] = []
         for plug in plugs:
-            backup["smart_plugs"].append({
-                "name": plug.name,
-                "ip_address": plug.ip_address,
-                "printer_id": plug.printer_id,
-                "enabled": plug.enabled,
-                "auto_on": plug.auto_on,
-                "auto_off": plug.auto_off,
-                "off_delay_mode": plug.off_delay_mode,
-                "off_delay_minutes": plug.off_delay_minutes,
-                "off_temp_threshold": plug.off_temp_threshold,
-                "username": plug.username,
-                "password": plug.password,
-                "power_alert_enabled": plug.power_alert_enabled,
-                "power_alert_high": plug.power_alert_high,
-                "power_alert_low": plug.power_alert_low,
-                "schedule_enabled": plug.schedule_enabled,
-                "schedule_on_time": plug.schedule_on_time,
-                "schedule_off_time": plug.schedule_off_time,
-            })
+            backup["smart_plugs"].append(
+                {
+                    "name": plug.name,
+                    "ip_address": plug.ip_address,
+                    "printer_id": plug.printer_id,
+                    "enabled": plug.enabled,
+                    "auto_on": plug.auto_on,
+                    "auto_off": plug.auto_off,
+                    "off_delay_mode": plug.off_delay_mode,
+                    "off_delay_minutes": plug.off_delay_minutes,
+                    "off_temp_threshold": plug.off_temp_threshold,
+                    "username": plug.username,
+                    "password": plug.password,
+                    "power_alert_enabled": plug.power_alert_enabled,
+                    "power_alert_high": plug.power_alert_high,
+                    "power_alert_low": plug.power_alert_low,
+                    "schedule_enabled": plug.schedule_enabled,
+                    "schedule_on_time": plug.schedule_on_time,
+                    "schedule_off_time": plug.schedule_off_time,
+                }
+            )
         backup["included"].append("smart_plugs")
 
     # External links
@@ -312,21 +326,23 @@ async def export_backup(
         filaments = result.scalars().all()
         backup["filaments"] = []
         for f in filaments:
-            backup["filaments"].append({
-                "name": f.name,
-                "type": f.type,
-                "brand": f.brand,
-                "color": f.color,
-                "color_hex": f.color_hex,
-                "cost_per_kg": f.cost_per_kg,
-                "spool_weight_g": f.spool_weight_g,
-                "currency": f.currency,
-                "density": f.density,
-                "print_temp_min": f.print_temp_min,
-                "print_temp_max": f.print_temp_max,
-                "bed_temp_min": f.bed_temp_min,
-                "bed_temp_max": f.bed_temp_max,
-            })
+            backup["filaments"].append(
+                {
+                    "name": f.name,
+                    "type": f.type,
+                    "brand": f.brand,
+                    "color": f.color,
+                    "color_hex": f.color_hex,
+                    "cost_per_kg": f.cost_per_kg,
+                    "spool_weight_g": f.spool_weight_g,
+                    "currency": f.currency,
+                    "density": f.density,
+                    "print_temp_min": f.print_temp_min,
+                    "print_temp_max": f.print_temp_max,
+                    "bed_temp_min": f.bed_temp_min,
+                    "bed_temp_max": f.bed_temp_max,
+                }
+            )
         backup["included"].append("filaments")
 
     # Maintenance types and records
@@ -336,14 +352,16 @@ async def export_backup(
         types = result.scalars().all()
         backup["maintenance_types"] = []
         for mt in types:
-            backup["maintenance_types"].append({
-                "name": mt.name,
-                "description": mt.description,
-                "default_interval_hours": mt.default_interval_hours,
-                "interval_type": mt.interval_type,
-                "icon": mt.icon,
-                "is_system": mt.is_system,
-            })
+            backup["maintenance_types"].append(
+                {
+                    "name": mt.name,
+                    "description": mt.description,
+                    "default_interval_hours": mt.default_interval_hours,
+                    "interval_type": mt.interval_type,
+                    "icon": mt.icon,
+                    "is_system": mt.is_system,
+                }
+            )
         backup["included"].append("maintenance_types")
 
     # Collect files for ZIP (icons + archives)
@@ -365,9 +383,17 @@ async def export_backup(
         backup["archives"] = []
         base_dir = app_settings.base_dir
 
+        # Build project ID to name mapping for archive export
+        project_id_to_name: dict[int, str] = {}
+        if include_projects:
+            proj_result = await db.execute(select(Project))
+            for proj in proj_result.scalars().all():
+                project_id_to_name[proj.id] = proj.name
+
         for a in archives:
             archive_data = {
                 "filename": a.filename,
+                "project_name": project_id_to_name.get(a.project_id) if a.project_id else None,
                 "file_size": a.file_size,
                 "content_hash": a.content_hash,
                 "print_name": a.print_name,
@@ -432,10 +458,61 @@ async def export_backup(
             backup["archives"].append(archive_data)
         backup["included"].append("archives")
 
+    # Projects with BOM items
+    if include_projects:
+        result = await db.execute(select(Project))
+        projects = result.scalars().all()
+        backup["projects"] = []
+
+        for p in projects:
+            # Get BOM items for this project
+            bom_result = await db.execute(select(ProjectBOMItem).where(ProjectBOMItem.project_id == p.id))
+            bom_items = bom_result.scalars().all()
+
+            project_data = {
+                "name": p.name,
+                "description": p.description,
+                "color": p.color,
+                "status": p.status,
+                "target_count": p.target_count,
+                "notes": p.notes,
+                "tags": p.tags,
+                "due_date": p.due_date.isoformat() if p.due_date else None,
+                "priority": p.priority,
+                "budget": p.budget,
+                "is_template": p.is_template,
+                "bom_items": [
+                    {
+                        "name": item.name,
+                        "quantity_needed": item.quantity_needed,
+                        "quantity_acquired": item.quantity_acquired,
+                        "unit_price": item.unit_price,
+                        "sourcing_url": item.sourcing_url,
+                        "stl_filename": item.stl_filename,
+                        "remarks": item.remarks,
+                        "sort_order": item.sort_order,
+                    }
+                    for item in bom_items
+                ],
+            }
+
+            # Include attachment files for ZIP
+            if p.attachments:
+                project_data["attachments"] = p.attachments
+                attachments_dir = base_dir / "projects" / str(p.id) / "attachments"
+                for att in p.attachments:
+                    att_path = attachments_dir / att.get("filename", "")
+                    if att_path.exists():
+                        zip_path = f"projects/{p.id}/attachments/{att['filename']}"
+                        backup_files.append((zip_path, att_path))
+
+            backup["projects"].append(project_data)
+        backup["included"].append("projects")
+
     # If there are files to include (icons or archives), create ZIP file
     if backup_files:
         zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             # Add backup.json
             zf.writestr("backup.json", json.dumps(backup, indent=2))
 
@@ -454,7 +531,7 @@ async def export_backup(
         return StreamingResponse(
             zip_buffer,
             media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     # Otherwise return JSON
@@ -462,7 +539,7 @@ async def export_backup(
         content=backup,
         headers={
             "Content-Disposition": f"attachment; filename=bambuddy-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
-        }
+        },
     )
 
 
@@ -479,27 +556,27 @@ async def import_backup(
         files_restored = 0
 
         # Check if it's a ZIP file
-        if file.filename and file.filename.endswith('.zip'):
+        if file.filename and file.filename.endswith(".zip"):
             try:
                 zip_buffer = io.BytesIO(content)
-                with zipfile.ZipFile(zip_buffer, 'r') as zf:
+                with zipfile.ZipFile(zip_buffer, "r") as zf:
                     # Extract backup.json
-                    if 'backup.json' not in zf.namelist():
+                    if "backup.json" not in zf.namelist():
                         return {"success": False, "message": "Invalid ZIP: missing backup.json"}
 
-                    backup_content = zf.read('backup.json')
+                    backup_content = zf.read("backup.json")
                     backup = json.loads(backup_content.decode("utf-8"))
 
                     # Extract all other files to base_dir
                     for zip_path in zf.namelist():
-                        if zip_path == 'backup.json':
+                        if zip_path == "backup.json":
                             continue
                         # Ensure path is safe (no path traversal)
-                        if '..' in zip_path or zip_path.startswith('/'):
+                        if ".." in zip_path or zip_path.startswith("/"):
                             continue
                         target_path = base_dir / zip_path
                         target_path.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(zip_path) as src, open(target_path, 'wb') as dst:
+                        with zf.open(zip_path) as src, open(target_path, "wb") as dst:
                             dst.write(src.read())
                             files_restored += 1
             except zipfile.BadZipFile:
@@ -520,6 +597,7 @@ async def import_backup(
         "printers": 0,
         "filaments": 0,
         "maintenance_types": 0,
+        "projects": 0,
     }
     skipped = {
         "settings": 0,
@@ -531,6 +609,7 @@ async def import_backup(
         "filaments": 0,
         "maintenance_types": 0,
         "archives": 0,
+        "projects": 0,
     }
     skipped_details = {
         "notification_providers": [],
@@ -540,6 +619,7 @@ async def import_backup(
         "filaments": [],
         "maintenance_types": [],
         "archives": [],
+        "projects": [],
     }
 
     # Restore settings (always overwrites)
@@ -616,9 +696,7 @@ async def import_backup(
     if "notification_templates" in backup:
         for template_data in backup["notification_templates"]:
             result = await db.execute(
-                select(NotificationTemplate).where(
-                    NotificationTemplate.event_type == template_data["event_type"]
-                )
+                select(NotificationTemplate).where(NotificationTemplate.event_type == template_data["event_type"])
             )
             existing = result.scalar_one_or_none()
             if existing:
@@ -641,9 +719,7 @@ async def import_backup(
     # Restore smart plugs (skip or overwrite duplicates by IP)
     if "smart_plugs" in backup:
         for plug_data in backup["smart_plugs"]:
-            result = await db.execute(
-                select(SmartPlug).where(SmartPlug.ip_address == plug_data["ip_address"])
-            )
+            result = await db.execute(select(SmartPlug).where(SmartPlug.ip_address == plug_data["ip_address"]))
             existing = result.scalar_one_or_none()
             if existing:
                 if overwrite:
@@ -697,10 +773,7 @@ async def import_backup(
 
         for link_data in backup["external_links"]:
             result = await db.execute(
-                select(ExternalLink).where(
-                    ExternalLink.name == link_data["name"],
-                    ExternalLink.url == link_data["url"]
-                )
+                select(ExternalLink).where(ExternalLink.name == link_data["name"], ExternalLink.url == link_data["url"])
             )
             existing = result.scalar_one_or_none()
             if existing:
@@ -728,9 +801,7 @@ async def import_backup(
     # Restore printers (skip or overwrite duplicates by serial_number)
     if "printers" in backup:
         for printer_data in backup["printers"]:
-            result = await db.execute(
-                select(Printer).where(Printer.serial_number == printer_data["serial_number"])
-            )
+            result = await db.execute(select(Printer).where(Printer.serial_number == printer_data["serial_number"]))
             existing = result.scalar_one_or_none()
             if existing:
                 if overwrite:
@@ -805,7 +876,9 @@ async def import_backup(
                     restored["filaments"] += 1
                 else:
                     skipped["filaments"] += 1
-                    skipped_details["filaments"].append(f"{filament_data.get('brand', '')} {filament_data['name']} ({filament_data['type']})")
+                    skipped_details["filaments"].append(
+                        f"{filament_data.get('brand', '')} {filament_data['name']} ({filament_data['type']})"
+                    )
             else:
                 filament = Filament(
                     name=filament_data["name"],
@@ -828,9 +901,7 @@ async def import_backup(
     # Restore maintenance types (skip or overwrite duplicates by name)
     if "maintenance_types" in backup:
         for mt_data in backup["maintenance_types"]:
-            result = await db.execute(
-                select(MaintenanceType).where(MaintenanceType.name == mt_data["name"])
-            )
+            result = await db.execute(select(MaintenanceType).where(MaintenanceType.name == mt_data["name"]))
             existing = result.scalar_one_or_none()
             if existing:
                 if overwrite:
@@ -861,9 +932,7 @@ async def import_backup(
             # Skip if no content_hash or already exists
             content_hash = archive_data.get("content_hash")
             if content_hash:
-                result = await db.execute(
-                    select(PrintArchive).where(PrintArchive.content_hash == content_hash)
-                )
+                result = await db.execute(select(PrintArchive).where(PrintArchive.content_hash == content_hash))
                 existing = result.scalar_one_or_none()
                 if existing:
                     skipped["archives"] += 1
@@ -907,15 +976,111 @@ async def import_backup(
                 db.add(archive)
                 restored["archives"] = restored.get("archives", 0) + 1
 
+    # Restore projects (skip or overwrite duplicates by name)
+    if "projects" in backup:
+        for project_data in backup["projects"]:
+            result = await db.execute(select(Project).where(Project.name == project_data["name"]))
+            existing = result.scalar_one_or_none()
+            if existing:
+                if overwrite:
+                    # Update existing project
+                    existing.description = project_data.get("description")
+                    existing.color = project_data.get("color")
+                    existing.status = project_data.get("status", "active")
+                    existing.target_count = project_data.get("target_count")
+                    existing.notes = project_data.get("notes")
+                    existing.tags = project_data.get("tags")
+                    existing.priority = project_data.get("priority", "normal")
+                    existing.budget = project_data.get("budget")
+                    existing.is_template = project_data.get("is_template", False)
+                    existing.attachments = project_data.get("attachments")
+                    if project_data.get("due_date"):
+                        existing.due_date = datetime.fromisoformat(project_data["due_date"])
+
+                    # Delete existing BOM items and re-add
+                    await db.execute(ProjectBOMItem.__table__.delete().where(ProjectBOMItem.project_id == existing.id))
+                    for bom_data in project_data.get("bom_items", []):
+                        bom_item = ProjectBOMItem(
+                            project_id=existing.id,
+                            name=bom_data["name"],
+                            quantity_needed=bom_data.get("quantity_needed", 1),
+                            quantity_acquired=bom_data.get("quantity_acquired", 0),
+                            unit_price=bom_data.get("unit_price"),
+                            sourcing_url=bom_data.get("sourcing_url"),
+                            stl_filename=bom_data.get("stl_filename"),
+                            remarks=bom_data.get("remarks"),
+                            sort_order=bom_data.get("sort_order", 0),
+                        )
+                        db.add(bom_item)
+
+                    restored["projects"] += 1
+                else:
+                    skipped["projects"] += 1
+                    skipped_details["projects"].append(project_data["name"])
+            else:
+                # Create new project
+                project = Project(
+                    name=project_data["name"],
+                    description=project_data.get("description"),
+                    color=project_data.get("color"),
+                    status=project_data.get("status", "active"),
+                    target_count=project_data.get("target_count"),
+                    notes=project_data.get("notes"),
+                    tags=project_data.get("tags"),
+                    priority=project_data.get("priority", "normal"),
+                    budget=project_data.get("budget"),
+                    is_template=project_data.get("is_template", False),
+                    attachments=project_data.get("attachments"),
+                )
+                if project_data.get("due_date"):
+                    project.due_date = datetime.fromisoformat(project_data["due_date"])
+
+                db.add(project)
+                await db.flush()  # Get the project ID
+
+                # Add BOM items
+                for bom_data in project_data.get("bom_items", []):
+                    bom_item = ProjectBOMItem(
+                        project_id=project.id,
+                        name=bom_data["name"],
+                        quantity_needed=bom_data.get("quantity_needed", 1),
+                        quantity_acquired=bom_data.get("quantity_acquired", 0),
+                        unit_price=bom_data.get("unit_price"),
+                        sourcing_url=bom_data.get("sourcing_url"),
+                        stl_filename=bom_data.get("stl_filename"),
+                        remarks=bom_data.get("remarks"),
+                        sort_order=bom_data.get("sort_order", 0),
+                    )
+                    db.add(bom_item)
+
+                restored["projects"] += 1
+
+    # Link archives to projects by name (after both are restored)
+    if "archives" in backup and "projects" in backup:
+        # Build project name to ID mapping
+        proj_result = await db.execute(select(Project))
+        project_name_to_id: dict[str, int] = {}
+        for proj in proj_result.scalars().all():
+            project_name_to_id[proj.name] = proj.id
+
+        # Update archives with project_id
+        for archive_data in backup["archives"]:
+            project_name = archive_data.get("project_name")
+            if project_name and project_name in project_name_to_id:
+                content_hash = archive_data.get("content_hash")
+                if content_hash:
+                    result = await db.execute(select(PrintArchive).where(PrintArchive.content_hash == content_hash))
+                    archive = result.scalar_one_or_none()
+                    if archive:
+                        archive.project_id = project_name_to_id[project_name]
+
     await db.commit()
 
     # If printers were in the backup (restored, updated, or skipped), reconnect all active printers
     # This ensures connections are re-established after restore, even if printers were skipped
     if "printers" in backup:
         # Need fresh query after commit to get proper IDs for newly created printers
-        result = await db.execute(
-            select(Printer).where(Printer.is_active == True)
-        )
+        result = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
         active_printers = result.scalars().all()
         for printer in active_printers:
             # This will disconnect existing connection (if any) and reconnect

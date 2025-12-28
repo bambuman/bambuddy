@@ -335,6 +335,30 @@ async def run_migrations(conn):
     except Exception:
         pass
 
+    # Migration: Rename quantity_printed to quantity_acquired in project_bom_items
+    try:
+        await conn.execute(text("ALTER TABLE project_bom_items RENAME COLUMN quantity_printed TO quantity_acquired"))
+    except Exception:
+        pass
+
+    # Migration: Add unit_price column to project_bom_items
+    try:
+        await conn.execute(text("ALTER TABLE project_bom_items ADD COLUMN unit_price REAL"))
+    except Exception:
+        pass
+
+    # Migration: Add sourcing_url column to project_bom_items
+    try:
+        await conn.execute(text("ALTER TABLE project_bom_items ADD COLUMN sourcing_url VARCHAR(512)"))
+    except Exception:
+        pass
+
+    # Migration: Rename notes to remarks in project_bom_items
+    try:
+        await conn.execute(text("ALTER TABLE project_bom_items RENAME COLUMN notes TO remarks"))
+    except Exception:
+        pass
+
 
 async def seed_notification_templates():
     """Seed default notification templates if they don't exist."""

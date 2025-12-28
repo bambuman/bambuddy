@@ -23,13 +23,13 @@ import {
   Download,
   Trash2,
   File,
-  DollarSign,
-  ClipboardList,
   Plus,
   History,
   FolderTree,
   Copy,
   Layers,
+  ExternalLink,
+  ShoppingCart,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { Archive, ProjectUpdate, BOMItem, BOMItemCreate } from '../api/client';
@@ -37,6 +37,7 @@ import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { useToast } from '../contexts/ToastContext';
 import { RichTextEditor } from '../components/RichTextEditor';
+import { ConfirmModal } from '../components/ConfirmModal';
 
 // Project edit modal (reused from ProjectsPage)
 import { ProjectModal } from './ProjectsPage';
@@ -227,6 +228,13 @@ export function ProjectDetailPage() {
     enabled: projectId > 0,
   });
 
+  const { data: settings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: api.getSettings,
+  });
+
+  const currency = settings?.currency || '$';
+
   const updateMutation = useMutation({
     mutationFn: (data: ProjectUpdate) => api.updateProject(projectId, data),
     onSuccess: () => {
@@ -261,9 +269,9 @@ export function ProjectDetailPage() {
 
     setUploadingAttachment(true);
     try {
-      await api.uploadProjectAttachment(projectId, file);
+      const result = await api.uploadProjectAttachment(projectId, file);
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
-      showToast('Attachment uploaded', 'success');
+      showToast(`Uploaded: ${result.original_name}`, 'success');
     } catch (error) {
       showToast((error as Error).message, 'error');
     } finally {
@@ -274,16 +282,22 @@ export function ProjectDetailPage() {
     }
   };
 
-  const handleDeleteAttachment = async (filename: string) => {
-    if (!confirm('Delete this attachment?')) return;
-
-    try {
-      await api.deleteProjectAttachment(projectId, filename);
-      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
-      showToast('Attachment deleted', 'success');
-    } catch (error) {
-      showToast((error as Error).message, 'error');
-    }
+  const handleDeleteAttachment = (filename: string, originalName: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Attachment',
+      message: `Are you sure you want to delete "${originalName}"?`,
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        try {
+          await api.deleteProjectAttachment(projectId, filename);
+          queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+          showToast('Attachment deleted', 'success');
+        } catch (error) {
+          showToast((error as Error).message, 'error');
+        }
+      },
+    });
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -295,6 +309,19 @@ export function ProjectDetailPage() {
   // BOM handlers
   const [newBomName, setNewBomName] = useState('');
   const [newBomQty, setNewBomQty] = useState(1);
+  const [newBomPrice, setNewBomPrice] = useState('');
+  const [newBomUrl, setNewBomUrl] = useState('');
+  const [newBomRemarks, setNewBomRemarks] = useState('');
+  const [showBomForm, setShowBomForm] = useState(false);
+  const [hideBomCompleted, setHideBomCompleted] = useState(false);
+
+  // Confirm modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
   const createBomMutation = useMutation({
     mutationFn: (data: BOMItemCreate) => api.createBOMItem(projectId, data),
@@ -303,13 +330,17 @@ export function ProjectDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
       setNewBomName('');
       setNewBomQty(1);
-      showToast('BOM item added', 'success');
+      setNewBomPrice('');
+      setNewBomUrl('');
+      setNewBomRemarks('');
+      setShowBomForm(false);
+      showToast('Part added', 'success');
     },
     onError: (error: Error) => showToast(error.message, 'error'),
   });
 
   const updateBomMutation = useMutation({
-    mutationFn: ({ itemId, data }: { itemId: number; data: { quantity_printed: number } }) =>
+    mutationFn: ({ itemId, data }: { itemId: number; data: { quantity_acquired?: number } }) =>
       api.updateBOMItem(projectId, itemId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-bom', projectId] });
@@ -323,7 +354,7 @@ export function ProjectDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-bom', projectId] });
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
-      showToast('BOM item deleted', 'success');
+      showToast('Part removed', 'success');
     },
     onError: (error: Error) => showToast(error.message, 'error'),
   });
@@ -331,20 +362,33 @@ export function ProjectDetailPage() {
   const handleAddBomItem = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBomName.trim()) return;
-    createBomMutation.mutate({ name: newBomName.trim(), quantity_needed: newBomQty });
-  };
-
-  const handleIncrementPrinted = (item: BOMItem) => {
-    updateBomMutation.mutate({
-      itemId: item.id,
-      data: { quantity_printed: item.quantity_printed + 1 },
+    createBomMutation.mutate({
+      name: newBomName.trim(),
+      quantity_needed: newBomQty,
+      unit_price: newBomPrice ? parseFloat(newBomPrice) : undefined,
+      sourcing_url: newBomUrl.trim() || undefined,
+      remarks: newBomRemarks.trim() || undefined,
     });
   };
 
-  const handleDeleteBomItem = (itemId: number) => {
-    if (confirm('Delete this BOM item?')) {
-      deleteBomMutation.mutate(itemId);
-    }
+  const handleToggleAcquired = (item: BOMItem) => {
+    const newQty = item.is_complete ? 0 : item.quantity_needed;
+    updateBomMutation.mutate({
+      itemId: item.id,
+      data: { quantity_acquired: newQty },
+    });
+  };
+
+  const handleDeleteBomItem = (itemId: number, itemName: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Part',
+      message: `Are you sure you want to delete "${itemName}"?`,
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        deleteBomMutation.mutate(itemId);
+      },
+    });
   };
 
   // Template handlers
@@ -395,7 +439,7 @@ export function ProjectDetailPage() {
     : null;
 
   return (
-    <div className="space-y-6">
+    <div className="p-4 md:p-8 space-y-8">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-bambu-gray">
         <Link to="/projects" className="hover:text-white transition-colors">
@@ -503,15 +547,14 @@ export function ProjectDetailPage() {
       {stats && (stats.estimated_cost > 0 || project.budget) && (
         <Card>
           <CardContent className="p-4">
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-3">
-              <DollarSign className="w-5 h-5" />
+            <h2 className="text-lg font-semibold text-white mb-3">
               Cost Tracking
             </h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <p className="text-xs text-bambu-gray uppercase">Filament Cost</p>
                 <p className="text-lg font-semibold text-white">
-                  ${stats.estimated_cost.toFixed(2)}
+                  {currency}{stats.estimated_cost.toFixed(2)}
                 </p>
               </div>
               {stats.total_energy_kwh > 0 && (
@@ -521,7 +564,7 @@ export function ProjectDetailPage() {
                     {stats.total_energy_kwh.toFixed(2)} kWh
                     {stats.total_energy_cost > 0 && (
                       <span className="text-sm text-bambu-gray ml-1">
-                        (${stats.total_energy_cost.toFixed(2)})
+                        ({currency}{stats.total_energy_cost.toFixed(2)})
                       </span>
                     )}
                   </p>
@@ -531,12 +574,12 @@ export function ProjectDetailPage() {
                 <>
                   <div>
                     <p className="text-xs text-bambu-gray uppercase">Budget</p>
-                    <p className="text-lg font-semibold text-white">${project.budget.toFixed(2)}</p>
+                    <p className="text-lg font-semibold text-white">{currency}{project.budget.toFixed(2)}</p>
                   </div>
                   <div>
                     <p className="text-xs text-bambu-gray uppercase">Remaining</p>
                     <p className={`text-lg font-semibold ${project.budget - stats.estimated_cost >= 0 ? 'text-bambu-green' : 'text-red-400'}`}>
-                      ${(project.budget - stats.estimated_cost).toFixed(2)}
+                      {currency}{(project.budget - stats.estimated_cost).toFixed(2)}
                     </p>
                   </div>
                 </>
@@ -734,6 +777,10 @@ export function ProjectDetailPage() {
             </div>
           </div>
 
+          <p className="text-xs text-bambu-gray mb-3">
+            Upload any file: images (PNG, JPG), PDFs, STL files, or documents.
+          </p>
+
           {project.attachments && project.attachments.length > 0 ? (
             <div className="space-y-2">
               {project.attachments.map((attachment) => (
@@ -762,7 +809,7 @@ export function ProjectDetailPage() {
                       <Download className="w-4 h-4" />
                     </a>
                     <button
-                      onClick={() => handleDeleteAttachment(attachment.filename)}
+                      onClick={() => handleDeleteAttachment(attachment.filename, attachment.original_name)}
                       className="p-2 rounded hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray hover:text-red-400"
                       title="Delete"
                     >
@@ -774,51 +821,106 @@ export function ProjectDetailPage() {
             </div>
           ) : (
             <p className="text-bambu-gray/70 text-sm italic">
-              No attachments. Upload STL files, reference images, or other documents.
+              No attachments yet. Click Upload to add files.
             </p>
           )}
         </CardContent>
       </Card>
 
-      {/* BOM Section */}
+      {/* BOM Section - Parts to source/purchase */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-              <ClipboardList className="w-5 h-5" />
+              <ShoppingCart className="w-5 h-5" />
               Bill of Materials
               {stats && stats.bom_total_items > 0 && (
                 <span className="text-sm font-normal text-bambu-gray">
-                  ({stats.bom_completed_items}/{stats.bom_total_items} complete)
+                  ({stats.bom_completed_items}/{stats.bom_total_items} acquired)
                 </span>
               )}
             </h2>
+            <div className="flex items-center gap-2">
+              {bomItems && bomItems.some(item => item.is_complete) && (
+                <button
+                  onClick={() => setHideBomCompleted(!hideBomCompleted)}
+                  className={`text-xs px-2 py-1 rounded transition-colors ${
+                    hideBomCompleted
+                      ? 'bg-bambu-green/20 text-bambu-green'
+                      : 'bg-bambu-dark text-bambu-gray hover:text-white'
+                  }`}
+                >
+                  {hideBomCompleted ? 'Show all' : 'Hide done'}
+                </button>
+              )}
+              {!showBomForm && (
+                <Button variant="secondary" size="sm" onClick={() => setShowBomForm(true)}>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add Part
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Add BOM item form */}
-          <form onSubmit={handleAddBomItem} className="flex gap-2 mb-4">
-            <input
-              type="text"
-              value={newBomName}
-              onChange={(e) => setNewBomName(e.target.value)}
-              className="flex-1 bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
-              placeholder="Part name..."
-            />
-            <input
-              type="number"
-              value={newBomQty}
-              onChange={(e) => setNewBomQty(parseInt(e.target.value) || 1)}
-              className="w-20 bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-bambu-green"
-              min="1"
-            />
-            <Button type="submit" size="sm" disabled={!newBomName.trim() || createBomMutation.isPending}>
-              {createBomMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Plus className="w-4 h-4" />
-              )}
-            </Button>
-          </form>
+          {showBomForm && (
+            <form onSubmit={handleAddBomItem} className="bg-bambu-dark rounded-lg p-4 mb-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  value={newBomName}
+                  onChange={(e) => setNewBomName(e.target.value)}
+                  className="bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+                  placeholder="Part name (e.g., M3x8 screws)"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={newBomQty}
+                    onChange={(e) => setNewBomQty(parseInt(e.target.value) || 1)}
+                    className="w-20 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-bambu-green"
+                    min="1"
+                    placeholder="Qty"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newBomPrice}
+                    onChange={(e) => setNewBomPrice(e.target.value)}
+                    className="flex-1 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+                    placeholder={`Price (${currency})`}
+                  />
+                </div>
+              </div>
+              <input
+                type="url"
+                value={newBomUrl}
+                onChange={(e) => setNewBomUrl(e.target.value)}
+                className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+                placeholder="Sourcing URL (optional)"
+              />
+              <input
+                type="text"
+                value={newBomRemarks}
+                onChange={(e) => setNewBomRemarks(e.target.value)}
+                className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+                placeholder="Remarks (optional)"
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="secondary" size="sm" onClick={() => setShowBomForm(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm" disabled={!newBomName.trim() || createBomMutation.isPending}>
+                  {createBomMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    'Add Part'
+                  )}
+                </Button>
+              </div>
+            </form>
+          )}
 
           {bomLoading ? (
             <div className="flex items-center justify-center py-4">
@@ -826,55 +928,94 @@ export function ProjectDetailPage() {
             </div>
           ) : bomItems && bomItems.length > 0 ? (
             <div className="space-y-2">
-              {bomItems.map((item) => (
+              {bomItems
+                .filter(item => !hideBomCompleted || !item.is_complete)
+                .map((item) => (
                 <div
                   key={item.id}
-                  className={`flex items-center justify-between p-3 rounded-lg ${
+                  className={`p-3 rounded-lg transition-colors ${
                     item.is_complete ? 'bg-bambu-green/10' : 'bg-bambu-dark'
                   }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-start gap-3">
                     <button
-                      onClick={() => handleIncrementPrinted(item)}
+                      onClick={() => handleToggleAcquired(item)}
                       disabled={updateBomMutation.isPending}
-                      className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
+                      className={`w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center transition-colors flex-shrink-0 ${
                         item.is_complete
                           ? 'bg-bambu-green border-bambu-green text-white'
                           : 'border-bambu-gray hover:border-bambu-green'
                       }`}
                     >
-                      {item.is_complete && <CheckCircle className="w-4 h-4" />}
+                      {item.is_complete && <CheckCircle className="w-3 h-3" />}
                     </button>
-                    <div className="min-w-0">
-                      <p className={`text-sm ${item.is_complete ? 'text-bambu-gray line-through' : 'text-white'}`}>
-                        {item.name}
-                      </p>
-                      <p className="text-xs text-bambu-gray">
-                        {item.quantity_printed} / {item.quantity_needed} printed
-                      </p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className={`text-sm font-medium ${item.is_complete ? 'text-bambu-gray line-through' : 'text-white'}`}>
+                            {item.name}
+                            <span className="text-bambu-gray font-normal ml-2">
+                              x{item.quantity_needed}
+                            </span>
+                          </p>
+                          {item.unit_price !== null && (
+                            <span className="text-xs text-bambu-green whitespace-nowrap">
+                              {currency}{(item.unit_price * item.quantity_needed).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleDeleteBomItem(item.id, item.name)}
+                          className="p-1 rounded hover:bg-bambu-dark-tertiary text-bambu-gray hover:text-red-400 transition-colors flex-shrink-0"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {/* Sourcing URL */}
+                      {item.sourcing_url && (
+                        <a
+                          href={item.sourcing_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 mt-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">
+                            {(() => {
+                              try {
+                                return new URL(item.sourcing_url).hostname.replace('www.', '');
+                              } catch {
+                                return item.sourcing_url;
+                              }
+                            })()}
+                          </span>
+                        </a>
+                      )}
+                      {/* Remarks */}
+                      {item.remarks && (
+                        <p className="mt-1 text-xs text-bambu-gray/80 italic">
+                          {item.remarks}
+                        </p>
+                      )}
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleIncrementPrinted(item)}
-                      disabled={updateBomMutation.isPending}
-                      className="px-2 py-1 text-xs bg-bambu-dark-tertiary rounded hover:bg-bambu-green/20 text-bambu-gray hover:text-white transition-colors"
-                    >
-                      +1
-                    </button>
-                    <button
-                      onClick={() => handleDeleteBomItem(item.id)}
-                      className="p-1 rounded hover:bg-bambu-dark-tertiary text-bambu-gray hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
                 </div>
               ))}
+              {/* BOM Total */}
+              {bomItems.some(item => item.unit_price !== null) && (
+                <div className="pt-2 mt-2 border-t border-bambu-dark-tertiary flex justify-between text-sm">
+                  <span className="text-bambu-gray">Total cost:</span>
+                  <span className="text-white font-medium">
+                    {currency}{bomItems.reduce((sum, item) => sum + (item.unit_price || 0) * item.quantity_needed, 0).toFixed(2)}
+                  </span>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-bambu-gray/70 text-sm italic">
-              No parts in the bill of materials. Add parts to track what needs to be printed.
+              No parts in the bill of materials. Add hardware, electronics, or other components to track what needs to be sourced.
             </p>
           )}
         </CardContent>
@@ -1009,6 +1150,18 @@ export function ProjectDetailPage() {
           onClose={() => setShowEditModal(false)}
           onSave={(data) => updateMutation.mutate(data as ProjectUpdate)}
           isLoading={updateMutation.isPending}
+        />
+      )}
+
+      {/* Confirm Modal */}
+      {confirmModal.isOpen && (
+        <ConfirmModal
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmText="Delete"
+          variant="danger"
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
         />
       )}
     </div>
