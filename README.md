@@ -129,8 +129,23 @@
 </p>
 
 <p align="center">
+  <img src="docs/screenshots/reprint_ams_mapping.png" alt="Reprint AMS Mapping" width="800">
+  <br><em>Re-print with AMS filament mapping preview</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/edit_timelapse.png" alt="Timelapse Editor" width="800">
+  <br><em>Built-in timelapse editor with trim, speed, and music</em>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/projects.png" alt="Projects" width="800">
   <br><em>Group related prints into projects</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/project_detail.png" alt="Project Detail" width="800">
+  <br><em>Project detail view with assigned archives</em>
 </p>
 
 <p align="center">
@@ -191,6 +206,16 @@
 <p align="center">
   <img src="docs/screenshots/settings_api_keys.png" alt="API Keys" width="800">
   <br><em>API keys and webhook endpoints</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/virtual_printer.png" alt="Virtual Printer" width="800">
+  <br><em>Virtual printer for direct slicer integration</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/quick_power_plug_sidebar.png" alt="Quick Power Plug" width="400">
+  <br><em>Quick power plug control in sidebar</em>
 </p>
 
 </details>
