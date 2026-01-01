@@ -42,6 +42,7 @@ import {
   FolderKanban,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { openInSlicer } from '../utils/slicer';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { Archive, ProjectListItem } from '../api/client';
 import { Card, CardContent } from '../components/Card';
@@ -233,7 +234,7 @@ function ArchiveCard({
         onClick: () => {
           const filename = archive.print_name || archive.filename || 'model';
           const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archive.id, filename)}`;
-          window.location.href = `bambustudioopen://${encodeURIComponent(downloadUrl)}`;
+          openInSlicer(downloadUrl);
         },
       },
     ] : [
@@ -243,7 +244,7 @@ function ArchiveCard({
         onClick: () => {
           const filename = archive.print_name || archive.filename || 'model';
           const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archive.id, filename)}`;
-          window.location.href = `bambustudioopen://${encodeURIComponent(downloadUrl)}`;
+          openInSlicer(downloadUrl);
         },
       },
     ]),
@@ -498,7 +499,7 @@ function ArchiveCard({
               // Open source 3MF in Bambu Studio - use filename in URL for slicer compatibility
               const sourceName = (archive.print_name || archive.filename || 'source').replace(/\.gcode\.3mf$/i, '') + '_source';
               const downloadUrl = `${window.location.origin}${api.getSource3mfForSlicer(archive.id, sourceName)}`;
-              window.location.href = `bambustudioopen://${encodeURIComponent(downloadUrl)}`;
+              openInSlicer(downloadUrl);
             }}
             title="Open source 3MF in Bambu Studio (right-click for more options)"
           >
@@ -684,7 +685,7 @@ function ArchiveCard({
                 onClick={() => {
                   const filename = archive.print_name || archive.filename || 'model';
                   const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archive.id, filename)}`;
-                  window.location.href = `bambustudioopen://${encodeURIComponent(downloadUrl)}`;
+                  openInSlicer(downloadUrl);
                 }}
                 title="Open in Bambu Studio"
               >
@@ -700,7 +701,7 @@ function ArchiveCard({
               onClick={() => {
                 const filename = archive.print_name || archive.filename || 'model';
                 const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archive.id, filename)}`;
-                window.location.href = `bambustudioopen://${encodeURIComponent(downloadUrl)}`;
+                openInSlicer(downloadUrl);
               }}
               title="Open in Bambu Studio to slice"
             >
@@ -1850,7 +1851,7 @@ export function ArchivesPage() {
                     onClick={() => {
                       const filename = archive.print_name || archive.filename || 'model';
                       const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archive.id, filename)}`;
-                      window.location.href = `bambustudioopen://${encodeURIComponent(downloadUrl)}`;
+                      openInSlicer(downloadUrl);
                     }}
                     title="Slice"
                   >

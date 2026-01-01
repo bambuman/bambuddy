@@ -4,6 +4,7 @@ import { ModelViewer } from './ModelViewer';
 import { GcodeViewer } from './GcodeViewer';
 import { Button } from './Button';
 import { api } from '../api/client';
+import { openInSlicer } from '../utils/slicer';
 
 type ViewTab = '3d' | 'gcode';
 
@@ -55,11 +56,10 @@ export function ModelViewerModal({ archiveId, title, onClose }: ModelViewerModal
   }, [archiveId]);
 
   const handleOpenInSlicer = () => {
-    // Use bambustudioopen:// protocol like MakerWorld does
     // URL must include .3mf filename for Bambu Studio to recognize the format
     const filename = title || 'model';
     const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archiveId, filename)}`;
-    window.location.href = `bambustudioopen://${encodeURIComponent(downloadUrl)}`;
+    openInSlicer(downloadUrl);
   };
 
   return (
