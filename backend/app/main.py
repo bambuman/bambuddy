@@ -1466,6 +1466,8 @@ async def track_printer_runtime():
                 now = datetime.now()
                 updated_count = 0
 
+                needs_commit = False
+
                 for printer in printers:
                     # Get current state from printer manager
                     state = printer_manager.get_status(printer.id)
@@ -1481,15 +1483,22 @@ async def track_printer_runtime():
                             if elapsed > 0 and elapsed < RUNTIME_TRACKING_INTERVAL * 2:
                                 printer.runtime_seconds += int(elapsed)
                                 updated_count += 1
+                                needs_commit = True
+                        else:
+                            # First time seeing printer active - need to commit to save timestamp
+                            needs_commit = True
 
                         printer.last_runtime_update = now
                     else:
                         # Printer is idle/offline - clear last_runtime_update
-                        printer.last_runtime_update = None
+                        if printer.last_runtime_update is not None:
+                            printer.last_runtime_update = None
+                            needs_commit = True
 
-                if updated_count > 0:
+                if needs_commit:
                     await db.commit()
-                    logger.debug(f"Updated runtime for {updated_count} printer(s)")
+                    if updated_count > 0:
+                        logger.debug(f"Updated runtime for {updated_count} printer(s)")
 
         except asyncio.CancelledError:
             logger.info("Runtime tracking cancelled")

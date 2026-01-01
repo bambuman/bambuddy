@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
@@ -7,14 +8,23 @@ from pydantic_settings import BaseSettings
 APP_VERSION = "0.1.6b3"
 GITHUB_REPO = "maziggy/bambuddy"
 
-# Base directory for path calculations
-_base_dir = Path(__file__).resolve().parent.parent.parent.parent
+# App directory - where the application is installed (for static files)
+_app_dir = Path(__file__).resolve().parent.parent.parent.parent
+
+# Data directory - for persistent data (database, archives)
+# Use DATA_DIR env var if set (Docker), otherwise use project root (local dev)
+_data_dir_env = os.environ.get("DATA_DIR")
+_data_dir = Path(_data_dir_env) if _data_dir_env else _app_dir
+
+# Log directory - use LOG_DIR env var if set, otherwise use app_dir/logs
+_log_dir_env = os.environ.get("LOG_DIR")
+_log_dir = Path(_log_dir_env) if _log_dir_env else _app_dir / "logs"
 
 
 def _migrate_database() -> Path:
     """Migrate database from old name to new name if needed."""
-    old_db = _base_dir / "bambutrack.db"
-    new_db = _base_dir / "bambuddy.db"
+    old_db = _data_dir / "bambutrack.db"
+    new_db = _data_dir / "bambuddy.db"
 
     # If old database exists and new one doesn't, rename it
     if old_db.exists() and not new_db.exists():
@@ -40,10 +50,10 @@ class Settings(BaseSettings):
     debug: bool = False  # Default to production mode
 
     # Paths
-    base_dir: Path = _base_dir
-    archive_dir: Path = base_dir / "archive"
-    static_dir: Path = base_dir / "static"
-    log_dir: Path = base_dir / "logs"
+    base_dir: Path = _data_dir  # For backwards compatibility
+    archive_dir: Path = _data_dir / "archive"
+    static_dir: Path = _app_dir / "static"  # Static files are part of app, not data
+    log_dir: Path = _log_dir
     database_url: str = f"sqlite+aiosqlite:///{_db_path}"
 
     # Logging

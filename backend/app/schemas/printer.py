@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -54,7 +55,8 @@ class AMSTray(BaseModel):
     tray_id_name: str | None = None  # Bambu filament ID like "A00-Y2" (can decode to color)
     tray_info_idx: str | None = None  # Filament preset ID like "GFA00"
     remain: int = 0
-    k: float | None = None  # Pressure advance value
+    k: float | None = None  # Pressure advance value (from tray or K-profile lookup)
+    cali_idx: int | None = None  # Calibration index for K-profile lookup
     tag_uid: str | None = None  # RFID tag UID (any tag)
     tray_uuid: str | None = None  # Bambu Lab spool UUID (32-char hex)
     nozzle_temp_min: int | None = None  # Min nozzle temperature
@@ -76,6 +78,7 @@ class NozzleInfoResponse(BaseModel):
 
 class PrintOptionsResponse(BaseModel):
     """AI detection and print options from xcam data."""
+
     # Core AI detectors
     spaghetti_detector: bool = False
     print_halt: bool = False

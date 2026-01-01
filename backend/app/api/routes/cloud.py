@@ -5,33 +5,36 @@ Handles authentication and profile management with Bambu Cloud.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.database import get_db
 from backend.app.models.settings import Settings
-from backend.app.services.bambu_cloud import (
-    get_cloud_service,
-    BambuCloudError,
-    BambuCloudAuthError,
-)
 from backend.app.schemas.cloud import (
-    CloudLoginRequest,
-    CloudVerifyRequest,
-    CloudLoginResponse,
     CloudAuthStatus,
-    CloudTokenRequest,
-    SlicerSettingsResponse,
-    SlicerSetting,
     CloudDevice,
+    CloudLoginRequest,
+    CloudLoginResponse,
+    CloudTokenRequest,
+    CloudVerifyRequest,
+    SlicerSetting,
     SlicerSettingCreate,
-    SlicerSettingUpdate,
     SlicerSettingDeleteResponse,
+    SlicerSettingsResponse,
+    SlicerSettingUpdate,
 )
+from backend.app.services.bambu_cloud import (
+    BambuCloudAuthError,
+    BambuCloudError,
+    get_cloud_service,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/cloud", tags=["cloud"])
 
@@ -43,9 +46,7 @@ CLOUD_EMAIL_KEY = "bambu_cloud_email"
 
 async def get_stored_token(db: AsyncSession) -> tuple[str | None, str | None]:
     """Get stored cloud token and email from database."""
-    result = await db.execute(
-        select(Settings).where(Settings.key.in_([CLOUD_TOKEN_KEY, CLOUD_EMAIL_KEY]))
-    )
+    result = await db.execute(select(Settings).where(Settings.key.in_([CLOUD_TOKEN_KEY, CLOUD_EMAIL_KEY])))
     settings = {s.key: s.value for s in result.scalars().all()}
     return settings.get(CLOUD_TOKEN_KEY), settings.get(CLOUD_EMAIL_KEY)
 
@@ -64,9 +65,7 @@ async def store_token(db: AsyncSession, token: str, email: str) -> None:
 
 async def clear_token(db: AsyncSession) -> None:
     """Clear stored cloud token and email."""
-    result = await db.execute(
-        select(Settings).where(Settings.key.in_([CLOUD_TOKEN_KEY, CLOUD_EMAIL_KEY]))
-    )
+    result = await db.execute(select(Settings).where(Settings.key.in_([CLOUD_TOKEN_KEY, CLOUD_EMAIL_KEY])))
     for setting in result.scalars().all():
         await db.delete(setting)
     await db.commit()
@@ -213,14 +212,16 @@ async def get_slicer_settings(
 
             parsed = []
             for s in all_settings:
-                parsed.append(SlicerSetting(
-                    setting_id=s.get("setting_id", s.get("id", "")),
-                    name=s.get("name", "Unknown"),
-                    type=our_type,
-                    version=s.get("version"),
-                    user_id=s.get("user_id"),
-                    updated_time=s.get("updated_time"),
-                ))
+                parsed.append(
+                    SlicerSetting(
+                        setting_id=s.get("setting_id", s.get("id", "")),
+                        name=s.get("name", "Unknown"),
+                        type=our_type,
+                        version=s.get("version"),
+                        user_id=s.get("user_id"),
+                        updated_time=s.get("updated_time"),
+                    )
+                )
             setattr(result, our_type, parsed)
 
         return result
@@ -256,6 +257,80 @@ async def get_setting_detail(setting_id: str, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=401, detail="Authentication expired")
     except BambuCloudError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Cache for filament preset info (setting_id -> {name, k})
+_filament_cache: dict[str, dict] = {}
+_filament_cache_time: float = 0
+FILAMENT_CACHE_TTL = 300  # 5 minutes
+
+
+@router.post("/filament-info")
+async def get_filament_info(setting_ids: list[str] = Body(...), db: AsyncSession = Depends(get_db)):
+    """
+    Get filament preset info (name and K value) for multiple setting IDs.
+
+    Used to enrich AMS tray tooltips with cloud preset data.
+    """
+    import time
+
+    logger.info(f"get_filament_info called with {len(setting_ids)} IDs: {setting_ids}")
+
+    global _filament_cache, _filament_cache_time
+
+    # Clear stale cache
+    if time.time() - _filament_cache_time > FILAMENT_CACHE_TTL:
+        _filament_cache = {}
+        _filament_cache_time = time.time()
+
+    token, _ = await get_stored_token(db)
+    if not token:
+        logger.info("get_filament_info: Not authenticated, returning empty")
+        # Return empty results if not authenticated (graceful degradation)
+        return {}
+
+    cloud = get_cloud_service()
+    cloud.set_token(token)
+
+    if not cloud.is_authenticated:
+        return {}
+
+    result = {}
+    for setting_id in setting_ids:
+        if not setting_id:
+            continue
+
+        # Check cache first
+        if setting_id in _filament_cache:
+            result[setting_id] = _filament_cache[setting_id]
+            continue
+
+        try:
+            data = await cloud.get_setting_detail(setting_id)
+            setting = data.get("setting", {})
+
+            # Extract name (e.g., "Bambu PLA Basic Jade White")
+            name = data.get("name", "")
+
+            # Extract K value (pressure_advance)
+            k_value = setting.get("pressure_advance")
+            if k_value is not None:
+                try:
+                    k_value = float(k_value)
+                except (ValueError, TypeError):
+                    k_value = None
+
+            info = {"name": name, "k": k_value}
+            _filament_cache[setting_id] = info
+            result[setting_id] = info
+
+        except Exception as e:
+            logger.warning(f"Failed to get cloud preset {setting_id}: {e}")
+            # Cache the failure to avoid repeated requests
+            _filament_cache[setting_id] = {"name": "", "k": None}
+            result[setting_id] = {"name": "", "k": None}
+
+    return result
 
 
 @router.get("/devices", response_model=list[CloudDevice])
@@ -425,7 +500,7 @@ def _load_fields(preset_type: str) -> dict:
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Field definitions not found for: {preset_type}")
 
-    with open(file_path, "r") as f:
+    with open(file_path) as f:
         data = json.load(f)
 
     _fields_cache[preset_type] = data

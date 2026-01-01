@@ -56,6 +56,18 @@ class AppSettings(BaseModel):
     virtual_printer_access_code: str = Field(default="", description="Access code for virtual printer authentication")
     virtual_printer_mode: str = Field(default="immediate", description="Archive mode: 'immediate' or 'queue'")
 
+    # Dark mode theme settings
+    dark_style: str = Field(default="classic", description="Dark mode style: classic, glow, vibrant")
+    dark_background: str = Field(
+        default="neutral", description="Dark mode background: neutral, warm, cool, oled, slate, forest"
+    )
+    dark_accent: str = Field(default="green", description="Dark mode accent: green, teal, blue, orange, purple, red")
+
+    # Light mode theme settings
+    light_style: str = Field(default="classic", description="Light mode style: classic, glow, vibrant")
+    light_background: str = Field(default="neutral", description="Light mode background: neutral, warm, cool")
+    light_accent: str = Field(default="green", description="Light mode accent: green, teal, blue, orange, purple, red")
+
 
 class AppSettingsUpdate(BaseModel):
     """Schema for updating settings (all fields optional)."""
@@ -84,3 +96,9 @@ class AppSettingsUpdate(BaseModel):
     virtual_printer_enabled: bool | None = None
     virtual_printer_access_code: str | None = None
     virtual_printer_mode: str | None = None
+    dark_style: str | None = None
+    dark_background: str | None = None
+    dark_accent: str | None = None
+    light_style: str | None = None
+    light_background: str | None = None
+    light_accent: str | None = None

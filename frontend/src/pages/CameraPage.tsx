@@ -100,6 +100,43 @@ export function CameraPage() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
+  // Save window size and position when user resizes or moves (only for popup windows)
+  useEffect(() => {
+    if (!window.opener) return;
+
+    let saveTimeout: NodeJS.Timeout;
+    const saveWindowState = () => {
+      // Debounce to avoid saving during drag
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        localStorage.setItem('cameraWindowState', JSON.stringify({
+          width: window.outerWidth,
+          height: window.outerHeight,
+          left: window.screenX,
+          top: window.screenY,
+        }));
+      }, 500);
+    };
+
+    window.addEventListener('resize', saveWindowState);
+    // Use interval to detect position changes (no native 'move' event)
+    const positionInterval = setInterval(() => {
+      const saved = localStorage.getItem('cameraWindowState');
+      if (saved) {
+        const state = JSON.parse(saved);
+        if (state.left !== window.screenX || state.top !== window.screenY) {
+          saveWindowState();
+        }
+      }
+    }, 1000);
+
+    return () => {
+      clearTimeout(saveTimeout);
+      clearInterval(positionInterval);
+      window.removeEventListener('resize', saveWindowState);
+    };
+  }, []);
+
   // Clean up reconnect timers on unmount
   useEffect(() => {
     return () => {
@@ -177,6 +214,28 @@ export function CameraPage() {
     }
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
+    }
+
+    // Auto-resize popup window to fit video content (only if no saved preference)
+    if (window.opener && imgRef.current && !localStorage.getItem('cameraWindowState')) {
+      const img = imgRef.current;
+      const videoWidth = img.naturalWidth;
+      const videoHeight = img.naturalHeight;
+
+      if (videoWidth > 0 && videoHeight > 0) {
+        // Add space for header bar (~45px) and some padding
+        const headerHeight = 45;
+        const padding = 16;
+
+        // Calculate window size (outer size includes chrome)
+        const chromeWidth = window.outerWidth - window.innerWidth;
+        const chromeHeight = window.outerHeight - window.innerHeight;
+
+        const targetWidth = videoWidth + padding + chromeWidth;
+        const targetHeight = videoHeight + headerHeight + padding + chromeHeight;
+
+        window.resizeTo(targetWidth, targetHeight);
+      }
     }
   };
 

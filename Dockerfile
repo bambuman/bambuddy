@@ -37,6 +37,7 @@ RUN mkdir -p /app/data /app/logs
 # Environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DATA_DIR=/app/data
+ENV LOG_DIR=/app/logs
 
 EXPOSE 8000
 

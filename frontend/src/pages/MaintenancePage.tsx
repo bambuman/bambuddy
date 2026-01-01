@@ -76,12 +76,22 @@ function formatDuration(value: number, type: 'hours' | 'days'): string {
     if (value < 1) return 'Today';
     if (value === 1) return '1 day';
     if (value < 7) return `${Math.round(value)} days`;
-    if (value < 30) return `${Math.round(value / 7)} weeks`;
+    // Show weeks for anything under 6 months for better precision
+    if (value < 180) return `${Math.round(value / 7)} weeks`;
+    // 6+ months show as months
     return `${Math.round(value / 30)} months`;
   } else {
+    // Print hours - convert to readable units
     if (value < 1) return `${Math.round(value * 60)}m`;
-    if (value < 10) return `${value.toFixed(1)}h`;
-    return `${Math.round(value)}h`;
+    if (value < 24) return `${value < 10 ? value.toFixed(1) : Math.round(value)}h`;
+    // 24+ hours: show as days of print time
+    const days = value / 24;
+    if (days < 7) return `${days < 2 ? days.toFixed(1) : Math.round(days)}d`;
+    // 7+ days: show as weeks of print time
+    const weeks = days / 7;
+    if (weeks < 12) return `${weeks < 2 ? weeks.toFixed(1) : Math.round(weeks)}w`;
+    // 12+ weeks: show as months of print time
+    return `${Math.round(weeks / 4)}mo`;
   }
 }
 

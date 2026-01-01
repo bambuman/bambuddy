@@ -6,7 +6,7 @@ import { useTheme } from '../contexts/ThemeContext';
 
 export function ExternalLinkPage() {
   const { id } = useParams<{ id: string }>();
-  const { theme } = useTheme();
+  const { mode } = useTheme();
 
   const { data: link, isLoading, error } = useQuery({
     queryKey: ['external-link', id],
@@ -35,7 +35,7 @@ export function ExternalLinkPage() {
     <iframe
       src={link.url}
       className="h-full w-full border-0"
-      style={{ colorScheme: theme }}
+      style={{ colorScheme: mode }}
       title={link.name}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
     />

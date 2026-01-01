@@ -52,10 +52,10 @@ export function AMSHistoryModal({
   thresholds,
 }: AMSHistoryModalProps) {
   const { t } = useTranslation();
-  const { theme } = useTheme();
+  const { mode: themeMode } = useTheme();
   const [timeRange, setTimeRange] = useState<TimeRange>('24h');
   const [mode, setMode] = useState<'humidity' | 'temperature'>(initialMode);
-  const isDark = theme === 'dark';
+  const isDark = themeMode === 'dark';
 
   // Close on Escape key
   useEffect(() => {

@@ -10,7 +10,7 @@ interface CardProps {
 export function Card({ children, className = '', onClick, onContextMenu }: CardProps) {
   return (
     <div
-      className={`bg-bambu-dark-secondary rounded-xl border border-bambu-dark-tertiary ${className}`}
+      className={`bg-bambu-dark-secondary rounded-xl border border-bambu-dark-tertiary card-shadow ${className}`}
       onClick={onClick}
       onContextMenu={onContextMenu}
     >

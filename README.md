@@ -109,7 +109,7 @@
 </tr>
 </table>
 
-**Plus:** Dark/light theme • Mobile responsive • Keyboard shortcuts • Multi-language (EN/DE) • Auto updates • Database backup/restore • System info dashboard
+**Plus:** Customizable themes (style, background, accent) • Mobile responsive • Keyboard shortcuts • Multi-language (EN/DE) • Auto updates • Database backup/restore • System info dashboard
 
 ---
 

@@ -16,6 +16,10 @@ import { VirtualPrinterSettings } from '../../components/VirtualPrinterSettings'
 
 // Mock the API client
 vi.mock('../../api/client', () => ({
+  api: {
+    getSettings: vi.fn().mockResolvedValue({}),
+    updateSettings: vi.fn().mockResolvedValue({}),
+  },
   virtualPrinterApi: {
     getSettings: vi.fn(),
     updateSettings: vi.fn(),

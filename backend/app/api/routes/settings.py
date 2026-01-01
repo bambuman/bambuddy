@@ -14,10 +14,11 @@ from backend.app.core.database import get_db
 from backend.app.models.archive import PrintArchive
 from backend.app.models.external_link import ExternalLink
 from backend.app.models.filament import Filament
-from backend.app.models.maintenance import MaintenanceType
+from backend.app.models.maintenance import MaintenanceHistory, MaintenanceType, PrinterMaintenance
 from backend.app.models.notification import NotificationProvider
 from backend.app.models.notification_template import NotificationTemplate
 from backend.app.models.pending_upload import PendingUpload
+from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.project import Project
 from backend.app.models.project_bom import ProjectBOMItem
@@ -42,14 +43,13 @@ async def get_setting(db: AsyncSession, key: str) -> str | None:
 
 async def set_setting(db: AsyncSession, key: str, value: str) -> None:
     """Set a single setting value."""
-    result = await db.execute(select(Settings).where(Settings.key == key))
-    setting = result.scalar_one_or_none()
+    from sqlalchemy import func
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-    if setting:
-        setting.value = value
-    else:
-        setting = Settings(key=key, value=value)
-        db.add(setting)
+    # Use upsert (INSERT ... ON CONFLICT UPDATE) for reliability
+    stmt = sqlite_insert(Settings).values(key=key, value=value)
+    stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value, "updated_at": func.now()})
+    await db.execute(stmt)
 
 
 @router.get("/", response_model=AppSettings)
@@ -180,7 +180,10 @@ async def export_backup(
     include_external_links: bool = Query(True, description="Include external sidebar links"),
     include_printers: bool = Query(False, description="Include printers (without access codes)"),
     include_filaments: bool = Query(False, description="Include filament inventory"),
-    include_maintenance: bool = Query(False, description="Include maintenance types and records"),
+    include_maintenance: bool = Query(
+        False, description="Include maintenance types, per-printer settings, and history"
+    ),
+    include_print_queue: bool = Query(False, description="Include print queue items"),
     include_archives: bool = Query(False, description="Include print archive metadata"),
     include_projects: bool = Query(False, description="Include projects with BOM items"),
     include_pending_uploads: bool = Query(False, description="Include pending virtual printer uploads"),
@@ -202,10 +205,20 @@ async def export_backup(
 
     # Notification providers
     if include_notifications:
+        # Build printer ID to serial lookup for cross-system backup
+        printer_id_to_serial: dict[int, str] = {}
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_id_to_serial[pr.id] = pr.serial_number
+
         result = await db.execute(select(NotificationProvider))
         providers = result.scalars().all()
         backup["notification_providers"] = []
         for p in providers:
+            # Use printer_serial for cross-system compatibility
+            provider_printer_id = getattr(p, "printer_id", None)
+            printer_serial = printer_id_to_serial.get(provider_printer_id) if provider_printer_id else None
+
             backup["notification_providers"].append(
                 {
                     "name": p.name,
@@ -221,12 +234,16 @@ async def export_backup(
                     "on_printer_error": p.on_printer_error,
                     "on_filament_low": p.on_filament_low,
                     "on_maintenance_due": p.on_maintenance_due,
+                    "on_ams_humidity_high": getattr(p, "on_ams_humidity_high", False),
+                    "on_ams_temperature_high": getattr(p, "on_ams_temperature_high", False),
+                    "on_ams_ht_humidity_high": getattr(p, "on_ams_ht_humidity_high", False),
+                    "on_ams_ht_temperature_high": getattr(p, "on_ams_ht_temperature_high", False),
                     "quiet_hours_enabled": p.quiet_hours_enabled,
                     "quiet_hours_start": p.quiet_hours_start,
                     "quiet_hours_end": p.quiet_hours_end,
                     "daily_digest_enabled": getattr(p, "daily_digest_enabled", False),
                     "daily_digest_time": getattr(p, "daily_digest_time", None),
-                    "printer_id": getattr(p, "printer_id", None),
+                    "printer_serial": printer_serial,
                 }
             )
         backup["included"].append("notification_providers")
@@ -253,12 +270,19 @@ async def export_backup(
         result = await db.execute(select(SmartPlug))
         plugs = result.scalars().all()
         backup["smart_plugs"] = []
+
+        # Build printer ID to serial mapping
+        printer_id_to_serial: dict[int, str] = {}
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_id_to_serial[pr.id] = pr.serial_number
+
         for plug in plugs:
             backup["smart_plugs"].append(
                 {
                     "name": plug.name,
                     "ip_address": plug.ip_address,
-                    "printer_id": plug.printer_id,
+                    "printer_serial": printer_id_to_serial.get(plug.printer_id) if plug.printer_id else None,
                     "enabled": plug.enabled,
                     "auto_on": plug.auto_on,
                     "auto_off": plug.auto_off,
@@ -316,6 +340,7 @@ async def export_backup(
                 "is_active": printer.is_active,
                 "auto_archive": printer.auto_archive,
                 "print_hours_offset": printer.print_hours_offset,
+                "runtime_seconds": printer.runtime_seconds,
             }
             if include_access_codes:
                 printer_data["access_code"] = printer.access_code
@@ -368,6 +393,99 @@ async def export_backup(
             )
         backup["included"].append("maintenance_types")
 
+        # Printer maintenance settings (per-printer custom intervals, enabled status, last performed)
+        result = await db.execute(select(PrinterMaintenance))
+        printer_maint = result.scalars().all()
+        backup["printer_maintenance"] = []
+
+        # Build lookups for printer serial and maintenance type name
+        printer_id_to_serial: dict[int, str] = {}
+        maint_type_id_to_name: dict[int, str] = {}
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_id_to_serial[pr.id] = pr.serial_number
+        for mt in types:
+            maint_type_id_to_name[mt.id] = mt.name
+
+        for pm in printer_maint:
+            backup["printer_maintenance"].append(
+                {
+                    "printer_serial": printer_id_to_serial.get(pm.printer_id),
+                    "maintenance_type_name": maint_type_id_to_name.get(pm.maintenance_type_id),
+                    "custom_interval_hours": pm.custom_interval_hours,
+                    "custom_interval_type": pm.custom_interval_type,
+                    "enabled": pm.enabled,
+                    "last_performed_at": pm.last_performed_at.isoformat() if pm.last_performed_at else None,
+                    "last_performed_hours": pm.last_performed_hours,
+                }
+            )
+        backup["included"].append("printer_maintenance")
+
+        # Maintenance history
+        result = await db.execute(select(MaintenanceHistory))
+        history = result.scalars().all()
+        backup["maintenance_history"] = []
+
+        # Build printer_maintenance ID to (printer_serial, maint_type_name) mapping
+        pm_id_to_info: dict[int, tuple[str | None, str | None]] = {}
+        for pm in printer_maint:
+            pm_id_to_info[pm.id] = (
+                printer_id_to_serial.get(pm.printer_id),
+                maint_type_id_to_name.get(pm.maintenance_type_id),
+            )
+
+        for mh in history:
+            info = pm_id_to_info.get(mh.printer_maintenance_id, (None, None))
+            backup["maintenance_history"].append(
+                {
+                    "printer_serial": info[0],
+                    "maintenance_type_name": info[1],
+                    "performed_at": mh.performed_at.isoformat() if mh.performed_at else None,
+                    "hours_at_maintenance": mh.hours_at_maintenance,
+                    "notes": mh.notes,
+                }
+            )
+        backup["included"].append("maintenance_history")
+
+    # Print queue
+    if include_print_queue:
+        result = await db.execute(select(PrintQueueItem))
+        queue_items = result.scalars().all()
+        backup["print_queue"] = []
+
+        # Build lookups
+        printer_id_to_serial: dict[int, str] = {}
+        archive_id_to_hash: dict[int, str | None] = {}
+        project_id_to_name: dict[int, str] = {}
+
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_id_to_serial[pr.id] = pr.serial_number
+        ar_result = await db.execute(select(PrintArchive))
+        for ar in ar_result.scalars().all():
+            archive_id_to_hash[ar.id] = ar.content_hash
+        proj_result = await db.execute(select(Project))
+        for proj in proj_result.scalars().all():
+            project_id_to_name[proj.id] = proj.name
+
+        for qi in queue_items:
+            backup["print_queue"].append(
+                {
+                    "printer_serial": printer_id_to_serial.get(qi.printer_id),
+                    "archive_hash": archive_id_to_hash.get(qi.archive_id),
+                    "project_name": project_id_to_name.get(qi.project_id) if qi.project_id else None,
+                    "position": qi.position,
+                    "scheduled_time": qi.scheduled_time.isoformat() if qi.scheduled_time else None,
+                    "require_previous_success": qi.require_previous_success,
+                    "auto_off_after": qi.auto_off_after,
+                    "status": qi.status,
+                    "started_at": qi.started_at.isoformat() if qi.started_at else None,
+                    "completed_at": qi.completed_at.isoformat() if qi.completed_at else None,
+                    "error_message": qi.error_message,
+                }
+            )
+        backup["included"].append("print_queue")
+
     # Collect files for ZIP (icons + archives)
     backup_files: list[tuple[str, Path]] = []  # (zip_path, local_path)
 
@@ -394,10 +512,18 @@ async def export_backup(
             for proj in proj_result.scalars().all():
                 project_id_to_name[proj.id] = proj.name
 
+        # Build printer ID to serial mapping for archive export
+        printer_id_to_serial: dict[int, str] = {}
+        if include_printers:
+            printer_result = await db.execute(select(Printer))
+            for pr in printer_result.scalars().all():
+                printer_id_to_serial[pr.id] = pr.serial_number
+
         for a in archives:
             archive_data = {
                 "filename": a.filename,
                 "project_name": project_id_to_name.get(a.project_id) if a.project_id else None,
+                "printer_serial": printer_id_to_serial.get(a.printer_id) if a.printer_id else None,
                 "file_size": a.file_size,
                 "content_hash": a.content_hash,
                 "print_name": a.print_name,
@@ -485,6 +611,8 @@ async def export_backup(
                 "priority": p.priority,
                 "budget": p.budget,
                 "is_template": p.is_template,
+                "template_source_id": p.template_source_id,
+                "parent_id": p.parent_id,
                 "bom_items": [
                     {
                         "name": item.name,
@@ -671,10 +799,79 @@ async def import_backup(
                 str_value = str(value)
             await set_setting(db, key, str_value)
             restored["settings"] += 1
+        # Flush settings to ensure they're persisted before continuing
+        await db.flush()
+
+    # Restore printers FIRST (skip or overwrite duplicates by serial_number)
+    # Nearly everything in the app references printers, so they must be imported first
+    if "printers" in backup:
+        for printer_data in backup["printers"]:
+            result = await db.execute(select(Printer).where(Printer.serial_number == printer_data["serial_number"]))
+            existing = result.scalar_one_or_none()
+            if existing:
+                if overwrite:
+                    existing.name = printer_data["name"]
+                    existing.ip_address = printer_data["ip_address"]
+                    existing.model = printer_data.get("model")
+                    existing.location = printer_data.get("location")
+                    existing.nozzle_count = printer_data.get("nozzle_count", 1)
+                    existing.auto_archive = printer_data.get("auto_archive", True)
+                    existing.print_hours_offset = printer_data.get("print_hours_offset", 0.0)
+                    existing.runtime_seconds = printer_data.get("runtime_seconds", 0)
+
+                    # If backup includes access_code, also update access_code and is_active
+                    backup_access_code = printer_data.get("access_code")
+                    if backup_access_code and backup_access_code != "CHANGE_ME":
+                        existing.access_code = backup_access_code
+                        is_active_val = printer_data.get("is_active", False)
+                        if isinstance(is_active_val, str):
+                            is_active_val = is_active_val.lower() == "true"
+                        existing.is_active = is_active_val
+
+                    restored["printers"] += 1
+                else:
+                    skipped["printers"] += 1
+                    skipped_details["printers"].append(f"{printer_data['name']} ({printer_data['serial_number']})")
+            else:
+                # Use access code from backup if provided, otherwise require manual setup
+                access_code = printer_data.get("access_code")
+                has_access_code = access_code and access_code != "CHANGE_ME"
+                is_active_from_backup = printer_data.get("is_active", False)
+                # Handle bool or string "true"/"false"
+                if isinstance(is_active_from_backup, str):
+                    is_active_from_backup = is_active_from_backup.lower() == "true"
+
+                printer = Printer(
+                    name=printer_data["name"],
+                    serial_number=printer_data["serial_number"],
+                    ip_address=printer_data["ip_address"],
+                    access_code=access_code if has_access_code else "CHANGE_ME",
+                    model=printer_data.get("model"),
+                    location=printer_data.get("location"),
+                    nozzle_count=printer_data.get("nozzle_count", 1),
+                    is_active=is_active_from_backup if has_access_code else False,
+                    auto_archive=printer_data.get("auto_archive", True),
+                    print_hours_offset=printer_data.get("print_hours_offset", 0.0),
+                    runtime_seconds=printer_data.get("runtime_seconds", 0),
+                )
+                db.add(printer)
+                restored["printers"] += 1
+        # Flush printers so other sections can look them up
+        await db.flush()
 
     # Restore notification providers (skip or overwrite duplicates by name)
+    # Build printer serial to ID lookup (printers were restored first)
     if "notification_providers" in backup:
+        printer_serial_to_id: dict[str, int] = {}
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_serial_to_id[pr.serial_number] = pr.id
+
         for provider_data in backup["notification_providers"]:
+            # Look up printer_id from serial (supports both old printer_id and new printer_serial format)
+            printer_serial = provider_data.get("printer_serial")
+            printer_id = printer_serial_to_id.get(printer_serial) if printer_serial else provider_data.get("printer_id")
+
             result = await db.execute(
                 select(NotificationProvider).where(NotificationProvider.name == provider_data["name"])
             )
@@ -694,12 +891,16 @@ async def import_backup(
                     existing.on_printer_error = provider_data.get("on_printer_error", False)
                     existing.on_filament_low = provider_data.get("on_filament_low", False)
                     existing.on_maintenance_due = provider_data.get("on_maintenance_due", False)
+                    existing.on_ams_humidity_high = provider_data.get("on_ams_humidity_high", False)
+                    existing.on_ams_temperature_high = provider_data.get("on_ams_temperature_high", False)
+                    existing.on_ams_ht_humidity_high = provider_data.get("on_ams_ht_humidity_high", False)
+                    existing.on_ams_ht_temperature_high = provider_data.get("on_ams_ht_temperature_high", False)
                     existing.quiet_hours_enabled = provider_data.get("quiet_hours_enabled", False)
                     existing.quiet_hours_start = provider_data.get("quiet_hours_start")
                     existing.quiet_hours_end = provider_data.get("quiet_hours_end")
                     existing.daily_digest_enabled = provider_data.get("daily_digest_enabled", False)
                     existing.daily_digest_time = provider_data.get("daily_digest_time")
-                    existing.printer_id = provider_data.get("printer_id")
+                    existing.printer_id = printer_id
                     restored["notification_providers"] += 1
                 else:
                     skipped["notification_providers"] += 1
@@ -719,12 +920,16 @@ async def import_backup(
                     on_printer_error=provider_data.get("on_printer_error", False),
                     on_filament_low=provider_data.get("on_filament_low", False),
                     on_maintenance_due=provider_data.get("on_maintenance_due", False),
+                    on_ams_humidity_high=provider_data.get("on_ams_humidity_high", False),
+                    on_ams_temperature_high=provider_data.get("on_ams_temperature_high", False),
+                    on_ams_ht_humidity_high=provider_data.get("on_ams_ht_humidity_high", False),
+                    on_ams_ht_temperature_high=provider_data.get("on_ams_ht_temperature_high", False),
                     quiet_hours_enabled=provider_data.get("quiet_hours_enabled", False),
                     quiet_hours_start=provider_data.get("quiet_hours_start"),
                     quiet_hours_end=provider_data.get("quiet_hours_end"),
                     daily_digest_enabled=provider_data.get("daily_digest_enabled", False),
                     daily_digest_time=provider_data.get("daily_digest_time"),
-                    printer_id=provider_data.get("printer_id"),
+                    printer_id=printer_id,
                 )
                 db.add(provider)
                 restored["notification_providers"] += 1
@@ -754,14 +959,25 @@ async def import_backup(
             restored["notification_templates"] += 1
 
     # Restore smart plugs (skip or overwrite duplicates by IP)
+    # Note: Smart plugs reference printers, so printers should be restored first
     if "smart_plugs" in backup:
+        # Build printer serial to ID lookup
+        printer_serial_to_id: dict[str, int] = {}
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_serial_to_id[pr.serial_number] = pr.id
+
         for plug_data in backup["smart_plugs"]:
+            # Look up printer_id from serial (supports both old printer_id and new printer_serial format)
+            printer_serial = plug_data.get("printer_serial")
+            printer_id = printer_serial_to_id.get(printer_serial) if printer_serial else plug_data.get("printer_id")
+
             result = await db.execute(select(SmartPlug).where(SmartPlug.ip_address == plug_data["ip_address"]))
             existing = result.scalar_one_or_none()
             if existing:
                 if overwrite:
                     existing.name = plug_data["name"]
-                    existing.printer_id = plug_data.get("printer_id")
+                    existing.printer_id = printer_id
                     existing.enabled = plug_data.get("enabled", True)
                     existing.auto_on = plug_data.get("auto_on", True)
                     existing.auto_off = plug_data.get("auto_off", True)
@@ -785,7 +1001,7 @@ async def import_backup(
                 plug = SmartPlug(
                     name=plug_data["name"],
                     ip_address=plug_data["ip_address"],
-                    printer_id=plug_data.get("printer_id"),
+                    printer_id=printer_id,
                     enabled=plug_data.get("enabled", True),
                     auto_on=plug_data.get("auto_on", True),
                     auto_off=plug_data.get("auto_off", True),
@@ -836,58 +1052,6 @@ async def import_backup(
                 )
                 db.add(link)
                 restored["external_links"] += 1
-
-    # Restore printers (skip or overwrite duplicates by serial_number)
-    if "printers" in backup:
-        for printer_data in backup["printers"]:
-            result = await db.execute(select(Printer).where(Printer.serial_number == printer_data["serial_number"]))
-            existing = result.scalar_one_or_none()
-            if existing:
-                if overwrite:
-                    existing.name = printer_data["name"]
-                    existing.ip_address = printer_data["ip_address"]
-                    existing.model = printer_data.get("model")
-                    existing.location = printer_data.get("location")
-                    existing.nozzle_count = printer_data.get("nozzle_count", 1)
-                    existing.auto_archive = printer_data.get("auto_archive", True)
-                    existing.print_hours_offset = printer_data.get("print_hours_offset", 0.0)
-
-                    # If backup includes access_code, also update access_code and is_active
-                    backup_access_code = printer_data.get("access_code")
-                    if backup_access_code and backup_access_code != "CHANGE_ME":
-                        existing.access_code = backup_access_code
-                        is_active_val = printer_data.get("is_active", False)
-                        if isinstance(is_active_val, str):
-                            is_active_val = is_active_val.lower() == "true"
-                        existing.is_active = is_active_val
-
-                    restored["printers"] += 1
-                else:
-                    skipped["printers"] += 1
-                    skipped_details["printers"].append(f"{printer_data['name']} ({printer_data['serial_number']})")
-            else:
-                # Use access code from backup if provided, otherwise require manual setup
-                access_code = printer_data.get("access_code")
-                has_access_code = access_code and access_code != "CHANGE_ME"
-                is_active_from_backup = printer_data.get("is_active", False)
-                # Handle bool or string "true"/"false"
-                if isinstance(is_active_from_backup, str):
-                    is_active_from_backup = is_active_from_backup.lower() == "true"
-
-                printer = Printer(
-                    name=printer_data["name"],
-                    serial_number=printer_data["serial_number"],
-                    ip_address=printer_data["ip_address"],
-                    access_code=access_code if has_access_code else "CHANGE_ME",
-                    model=printer_data.get("model"),
-                    location=printer_data.get("location"),
-                    nozzle_count=printer_data.get("nozzle_count", 1),
-                    is_active=is_active_from_backup if has_access_code else False,
-                    auto_archive=printer_data.get("auto_archive", True),
-                    print_hours_offset=printer_data.get("print_hours_offset", 0.0),
-                )
-                db.add(printer)
-                restored["printers"] += 1
 
     # Restore filaments (skip or overwrite duplicates by name+type+brand)
     if "filaments" in backup:
@@ -965,8 +1129,138 @@ async def import_backup(
                 db.add(mt)
                 restored["maintenance_types"] += 1
 
+    # Restore printer maintenance settings (per-printer)
+    if "printer_maintenance" in backup:
+        # Build lookups
+        printer_serial_to_id: dict[str, int] = {}
+        maint_type_name_to_id: dict[str, int] = {}
+
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_serial_to_id[pr.serial_number] = pr.id
+
+        mt_result = await db.execute(select(MaintenanceType))
+        for mt in mt_result.scalars().all():
+            maint_type_name_to_id[mt.name] = mt.id
+
+        restored["printer_maintenance"] = 0
+        skipped["printer_maintenance"] = 0
+        skipped_details["printer_maintenance"] = []
+
+        for pm_data in backup["printer_maintenance"]:
+            printer_serial = pm_data.get("printer_serial")
+            maint_type_name = pm_data.get("maintenance_type_name")
+
+            if not printer_serial or not maint_type_name:
+                continue
+
+            printer_id = printer_serial_to_id.get(printer_serial)
+            maint_type_id = maint_type_name_to_id.get(maint_type_name)
+
+            if not printer_id or not maint_type_id:
+                skipped["printer_maintenance"] += 1
+                skipped_details["printer_maintenance"].append(f"{printer_serial}/{maint_type_name}")
+                continue
+
+            # Check if exists
+            result = await db.execute(
+                select(PrinterMaintenance).where(
+                    PrinterMaintenance.printer_id == printer_id,
+                    PrinterMaintenance.maintenance_type_id == maint_type_id,
+                )
+            )
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                if overwrite:
+                    existing.custom_interval_hours = pm_data.get("custom_interval_hours")
+                    existing.custom_interval_type = pm_data.get("custom_interval_type")
+                    existing.enabled = pm_data.get("enabled", True)
+                    existing.last_performed_hours = pm_data.get("last_performed_hours", 0.0)
+                    if pm_data.get("last_performed_at"):
+                        existing.last_performed_at = datetime.fromisoformat(pm_data["last_performed_at"])
+                    restored["printer_maintenance"] += 1
+                else:
+                    skipped["printer_maintenance"] += 1
+                    skipped_details["printer_maintenance"].append(f"{printer_serial}/{maint_type_name}")
+            else:
+                pm = PrinterMaintenance(
+                    printer_id=printer_id,
+                    maintenance_type_id=maint_type_id,
+                    custom_interval_hours=pm_data.get("custom_interval_hours"),
+                    custom_interval_type=pm_data.get("custom_interval_type"),
+                    enabled=pm_data.get("enabled", True),
+                    last_performed_hours=pm_data.get("last_performed_hours", 0.0),
+                )
+                if pm_data.get("last_performed_at"):
+                    pm.last_performed_at = datetime.fromisoformat(pm_data["last_performed_at"])
+                db.add(pm)
+                restored["printer_maintenance"] += 1
+
+    # Restore maintenance history
+    if "maintenance_history" in backup:
+        # Build lookups
+        printer_serial_to_id: dict[str, int] = {}
+        maint_type_name_to_id: dict[str, int] = {}
+
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_serial_to_id[pr.serial_number] = pr.id
+
+        mt_result = await db.execute(select(MaintenanceType))
+        for mt in mt_result.scalars().all():
+            maint_type_name_to_id[mt.name] = mt.id
+
+        restored["maintenance_history"] = 0
+        skipped["maintenance_history"] = 0
+        skipped_details["maintenance_history"] = []
+
+        for mh_data in backup["maintenance_history"]:
+            printer_serial = mh_data.get("printer_serial")
+            maint_type_name = mh_data.get("maintenance_type_name")
+
+            if not printer_serial or not maint_type_name:
+                continue
+
+            printer_id = printer_serial_to_id.get(printer_serial)
+            maint_type_id = maint_type_name_to_id.get(maint_type_name)
+
+            if not printer_id or not maint_type_id:
+                skipped["maintenance_history"] += 1
+                continue
+
+            # Find the PrinterMaintenance record
+            result = await db.execute(
+                select(PrinterMaintenance).where(
+                    PrinterMaintenance.printer_id == printer_id,
+                    PrinterMaintenance.maintenance_type_id == maint_type_id,
+                )
+            )
+            pm = result.scalar_one_or_none()
+
+            if not pm:
+                skipped["maintenance_history"] += 1
+                continue
+
+            # Create history entry (no duplicate check - history is append-only)
+            mh = MaintenanceHistory(
+                printer_maintenance_id=pm.id,
+                hours_at_maintenance=mh_data.get("hours_at_maintenance", 0.0),
+                notes=mh_data.get("notes"),
+            )
+            if mh_data.get("performed_at"):
+                mh.performed_at = datetime.fromisoformat(mh_data["performed_at"])
+            db.add(mh)
+            restored["maintenance_history"] += 1
+
     # Restore archives (skip duplicates by content_hash - overwrite not supported for archives)
     if "archives" in backup:
+        # Build printer serial to ID mapping
+        printer_serial_to_id: dict[str, int] = {}
+        printer_result = await db.execute(select(Printer))
+        for pr in printer_result.scalars().all():
+            printer_serial_to_id[pr.serial_number] = pr.id
+
         for archive_data in backup["archives"]:
             # Skip if no content_hash or already exists
             content_hash = archive_data.get("content_hash")
@@ -981,11 +1275,16 @@ async def import_backup(
             # Only restore if file exists (from ZIP extraction)
             file_path = archive_data.get("file_path")
             if file_path and (base_dir / file_path).exists():
+                # Look up printer_id from serial
+                printer_serial = archive_data.get("printer_serial")
+                printer_id = printer_serial_to_id.get(printer_serial) if printer_serial else None
+
                 archive = PrintArchive(
                     filename=archive_data["filename"],
                     file_path=file_path,
                     file_size=archive_data.get("file_size", 0),
                     content_hash=content_hash,
+                    printer_id=printer_id,
                     thumbnail_path=archive_data.get("thumbnail_path"),
                     timelapse_path=archive_data.get("timelapse_path"),
                     source_3mf_path=archive_data.get("source_3mf_path"),
@@ -1032,6 +1331,8 @@ async def import_backup(
                     existing.priority = project_data.get("priority", "normal")
                     existing.budget = project_data.get("budget")
                     existing.is_template = project_data.get("is_template", False)
+                    existing.template_source_id = project_data.get("template_source_id")
+                    existing.parent_id = project_data.get("parent_id")
                     existing.attachments = project_data.get("attachments")
                     if project_data.get("due_date"):
                         existing.due_date = datetime.fromisoformat(project_data["due_date"])
@@ -1069,6 +1370,8 @@ async def import_backup(
                     priority=project_data.get("priority", "normal"),
                     budget=project_data.get("budget"),
                     is_template=project_data.get("is_template", False),
+                    template_source_id=project_data.get("template_source_id"),
+                    parent_id=project_data.get("parent_id"),
                     attachments=project_data.get("attachments"),
                 )
                 if project_data.get("due_date"):
@@ -1112,6 +1415,68 @@ async def import_backup(
                     archive = result.scalar_one_or_none()
                     if archive:
                         archive.project_id = project_name_to_id[project_name]
+
+    # Restore print queue (must be after archives and projects)
+    if "print_queue" in backup:
+        # Build lookups
+        printer_serial_to_id: dict[str, int] = {}
+        archive_hash_to_id: dict[str, int] = {}
+        project_name_to_id: dict[str, int] = {}
+
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            printer_serial_to_id[pr.serial_number] = pr.id
+
+        ar_result = await db.execute(select(PrintArchive))
+        for ar in ar_result.scalars().all():
+            if ar.content_hash:
+                archive_hash_to_id[ar.content_hash] = ar.id
+
+        proj_result = await db.execute(select(Project))
+        for proj in proj_result.scalars().all():
+            project_name_to_id[proj.name] = proj.id
+
+        restored["print_queue"] = 0
+        skipped["print_queue"] = 0
+        skipped_details["print_queue"] = []
+
+        for qi_data in backup["print_queue"]:
+            printer_serial = qi_data.get("printer_serial")
+            archive_hash = qi_data.get("archive_hash")
+
+            if not printer_serial or not archive_hash:
+                skipped["print_queue"] += 1
+                continue
+
+            printer_id = printer_serial_to_id.get(printer_serial)
+            archive_id = archive_hash_to_id.get(archive_hash)
+
+            if not printer_id or not archive_id:
+                skipped["print_queue"] += 1
+                skipped_details["print_queue"].append(f"{printer_serial}/{archive_hash[:8] if archive_hash else 'N/A'}")
+                continue
+
+            project_name = qi_data.get("project_name")
+            project_id = project_name_to_id.get(project_name) if project_name else None
+
+            qi = PrintQueueItem(
+                printer_id=printer_id,
+                archive_id=archive_id,
+                project_id=project_id,
+                position=qi_data.get("position", 0),
+                require_previous_success=qi_data.get("require_previous_success", False),
+                auto_off_after=qi_data.get("auto_off_after", False),
+                status=qi_data.get("status", "pending"),
+                error_message=qi_data.get("error_message"),
+            )
+            if qi_data.get("scheduled_time"):
+                qi.scheduled_time = datetime.fromisoformat(qi_data["scheduled_time"])
+            if qi_data.get("started_at"):
+                qi.started_at = datetime.fromisoformat(qi_data["started_at"])
+            if qi_data.get("completed_at"):
+                qi.completed_at = datetime.fromisoformat(qi_data["completed_at"])
+            db.add(qi)
+            restored["print_queue"] += 1
 
     # Restore pending uploads (skip duplicates by filename)
     if "pending_uploads" in backup:

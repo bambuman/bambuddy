@@ -40,12 +40,154 @@ import { MQTTDebugModal } from '../components/MQTTDebugModal';
 import { HMSErrorModal, filterKnownHMSErrors } from '../components/HMSErrorModal';
 import { PrinterQueueWidget } from '../components/PrinterQueueWidget';
 import { AMSHistoryModal } from '../components/AMSHistoryModal';
+import { FilamentHoverCard, EmptySlotHoverCard } from '../components/FilamentHoverCard';
+
+// Bambu Lab color code mapping (color suffix from tray_id_name -> color name)
+// tray_id_name format: "A00-Y2" where Y2 is the color code
+const BAMBU_COLOR_CODES: Record<string, string> = {
+  // Yellows
+  'Y0': 'Yellow',
+  'Y1': 'Savana Yellow',
+  'Y2': 'Sunflower Yellow',
+  'Y3': 'Lemon Yellow',
+  // Oranges
+  'O0': 'Orange',
+  'O1': 'Mandarin Orange',
+  'O2': 'Coral Orange',
+  // Reds
+  'R0': 'Red',
+  'R1': 'Scarlet Red',
+  'R2': 'Magenta',
+  'R3': 'Sakura Pink',
+  'R4': 'Raspberry Red',
+  // Pinks
+  'P0': 'Pink',
+  'P1': 'Sakura Pink',
+  // Purples
+  'V0': 'Purple',
+  'V1': 'Violet',
+  'V2': 'Lilac Purple',
+  // Blues
+  'B0': 'Blue',
+  'B1': 'Sky Blue',
+  'B2': 'Navy Blue',
+  'B3': 'Ice Blue',
+  'B4': 'Cyan',
+  // Greens
+  'G0': 'Green',
+  'G1': 'Grass Green',
+  'G2': 'Lime Green',
+  'G3': 'Mint Green',
+  'G4': 'Olive Green',
+  'G5': 'Jungle Green',
+  'G6': 'Bambu Green',
+  // Browns
+  'N0': 'Brown',
+  'N1': 'Peanut Brown',
+  'N2': 'Coffee Brown',
+  'N3': 'Caramel Brown',
+  // Grays
+  'A0': 'Gray',
+  'A1': 'Charcoal Gray',
+  'A2': 'Silver Gray',
+  'A3': 'Titan Gray',
+  // Blacks
+  'K0': 'Black',
+  'K1': 'Black',
+  // Whites
+  'W0': 'White',
+  'W1': 'Jade White',
+  'W2': 'Ivory White',
+  // Special
+  'T0': 'Transparent',
+  'C0': 'Marble',
+  'X0': 'Bronze',
+  'X1': 'Gold',
+  'X2': 'Silver',
+};
+
+// Get color name from Bambu Lab tray_id_name (e.g., "A00-Y2" -> "Sunflower Yellow")
+function getBambuColorName(trayIdName: string | null | undefined): string | null {
+  if (!trayIdName) return null;
+  // Extract color code after the dash (e.g., "A00-Y2" -> "Y2")
+  const parts = trayIdName.split('-');
+  if (parts.length < 2) return null;
+  const colorCode = parts[1];
+  return BAMBU_COLOR_CODES[colorCode] || null;
+}
+
+// Convert hex color to basic color name
+function hexToBasicColorName(hex: string | null | undefined): string {
+  if (!hex || hex.length < 6) return 'Unknown';
+
+  // Parse RGB from hex (format: RRGGBBAA or RRGGBB)
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+
+  // Calculate HSL for better color classification
+  const max = Math.max(r, g, b) / 255;
+  const min = Math.min(r, g, b) / 255;
+  const l = (max + min) / 2;
+
+  let h = 0;
+  let s = 0;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+    const rNorm = r / 255;
+    const gNorm = g / 255;
+    const bNorm = b / 255;
+
+    if (max === rNorm) {
+      h = ((gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0)) / 6;
+    } else if (max === gNorm) {
+      h = ((bNorm - rNorm) / d + 2) / 6;
+    } else {
+      h = ((rNorm - gNorm) / d + 4) / 6;
+    }
+  }
+
+  // Convert to degrees
+  h = h * 360;
+
+  // Classify by lightness first
+  if (l < 0.15) return 'Black';
+  if (l > 0.85) return 'White';
+
+  // Low saturation = gray
+  if (s < 0.15) {
+    if (l < 0.4) return 'Dark Gray';
+    if (l > 0.6) return 'Light Gray';
+    return 'Gray';
+  }
+
+  // Classify by hue
+  if (h < 15 || h >= 345) return 'Red';
+  if (h < 45) return 'Orange';
+  if (h < 70) return 'Yellow';
+  if (h < 150) return 'Green';
+  if (h < 200) return 'Cyan';
+  if (h < 260) return 'Blue';
+  if (h < 290) return 'Purple';
+  if (h < 345) return 'Pink';
+
+  return 'Unknown';
+}
+
+// Format K value with 3 decimal places, default to 0.020 if null
+function formatKValue(k: number | null | undefined): string {
+  const value = k ?? 0.020;
+  return value.toFixed(3);
+}
 
 // Nozzle side indicators (Bambu Lab style - square badge with L/R)
 function NozzleBadge({ side }: { side: 'L' | 'R' }) {
-  const { theme } = useTheme();
-  // Light theme: #e7f5e9 (light green), Dark theme: #1a4d2e (dark green)
-  const bgColor = theme === 'dark' ? '#1a4d2e' : '#e7f5e9';
+  const { mode } = useTheme();
+  // Light mode: #e7f5e9 (light green), Dark mode: #1a4d2e (dark green)
+  const bgColor = mode === 'dark' ? '#1a4d2e' : '#e7f5e9';
   return (
     <span
       className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded"
@@ -53,88 +195,6 @@ function NozzleBadge({ side }: { side: 'L' | 'R' }) {
     >
       {side}
     </span>
-  );
-}
-
-// AMS 4-tray device icon with fillable colored spool slots (Bambu Studio style)
-interface AMS4TrayIconProps {
-  colors: (string | null)[]; // Array of 4 colors (hex) or null for empty
-  className?: string;
-}
-
-function AMS4TrayIcon({ colors, className }: AMS4TrayIconProps) {
-  // Spool positions: x start, centered at 12.5, 21.5, 30.5, 39.5
-  // Each spool slot is 6 units wide (from 9.5-15.5, 18.5-24.5, etc.)
-  const spoolSlots = [
-    { x: 9.5, cx: 12.5 },
-    { x: 18.5, cx: 21.5 },
-    { x: 27.5, cx: 30.5 },
-    { x: 36.5, cx: 39.5 },
-  ];
-
-  return (
-    <svg className={className} width="56" height="34" viewBox="0 0 52 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Outer casing with window */}
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M4 0C1.79086 0 0 1.79086 0 4V28C0 30.2091 1.79086 32 4 32H48C50.2091 32 52 30.2091 52 28V4C52 1.79086 50.2091 0 48 0H4ZM44 8H8V24H44V8Z"
-        fill="#2F2E33"
-      />
-      {/* Spool color fills - rectangles that fill the visible window area */}
-      {spoolSlots.map((slot, i) => (
-        colors[i] ? (
-          <rect key={i} x={slot.x} y="8" width="6" height="16" fill={colors[i]!} />
-        ) : (
-          <g key={i}>
-            <rect x={slot.x} y="8" width="6" height="16" fill="#ffffff" />
-            <line x1={slot.x} y1="8" x2={slot.x + 6} y2="24" stroke="#555555" strokeWidth="1.5" />
-          </g>
-        )
-      ))}
-      {/* Bottom half overlay (spool holders - creates rounded bottom edges) */}
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M36.5 16H33.5V18.2617C33.5 19.9186 32.1569 21.2617 30.5 21.2617C28.8431 21.2617 27.5 19.9186 27.5 18.2617V16H24.5V18.2617C24.5 19.9186 23.1569 21.2617 21.5 21.2617C19.8431 21.2617 18.5 19.9186 18.5 18.2617V16H15.5V18.2617C15.5 19.9186 14.1569 21.2617 12.5 21.2617C10.8432 21.2617 9.5 19.9186 9.5 18.2617V16H4V28H48V16H42.5V18.2617C42.5 19.9186 41.1569 21.2617 39.5 21.2617C37.8431 21.2617 36.5 19.9186 36.5 18.2617V16Z"
-        fill="#767676"
-      />
-      {/* Top half overlay (spool tops - creates rounded top edges) */}
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M6 9.18382C6 6.32088 8.32088 4 11.1838 4H40.8162C43.6791 4 46 6.32088 46 9.18382V16H42.5V12.2617C42.5 10.6049 41.1569 9.26172 39.5 9.26172C37.8431 9.26172 36.5 10.6049 36.5 12.2617V16H33.5V12.2617C33.5 10.6049 32.1569 9.26172 30.5 9.26172C28.8431 9.26172 27.5 10.6049 27.5 12.2617V16H24.5V12.2617C24.5 10.6049 23.1569 9.26172 21.5 9.26172C19.8431 9.26172 18.5 10.6049 18.5 12.2617V16H15.5V12.2617C15.5 10.6049 14.1569 9.26172 12.5 9.26172C10.8432 9.26172 9.5 10.6049 9.5 12.2617V16H6V9.18382Z"
-        fill="#BFBFBF"
-      />
-    </svg>
-  );
-}
-
-// AMS 1-tray device icon (AMS-HT) with fillable colored slot (Bambu Studio style)
-interface AMS1TrayIconProps {
-  color: string | null; // Hex color or null for empty
-  className?: string;
-}
-
-function AMS1TrayIcon({ color, className }: AMS1TrayIconProps) {
-  return (
-    <svg className={className} width="56" height="56" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Filament color fill */}
-      {color ? (
-        <rect x="8.3" y="5.2" width="3.8" height="5.1" fill={color} rx="0.3"/>
-      ) : (
-        <g>
-          <rect x="8.3" y="5.2" width="3.8" height="5.1" fill="#ffffff" rx="0.3"/>
-          <line x1="8.3" y1="5.2" x2="12.1" y2="10.3" stroke="#555555" strokeWidth="0.8" />
-        </g>
-      )}
-      {/* Device outline - top housing */}
-      <path d="M5.88312 4.68555C5.88312 4.13326 6.33083 3.68555 6.88312 3.68555H13.5059C14.0582 3.68555 14.5059 4.13326 14.5059 4.68555V10.3887H5.88312V4.68555Z" stroke="#6B6B6B"/>
-      {/* Bottom base */}
-      <rect x="3.8725" y="10.3887" width="12.7037" height="7.55371" rx="1.2" stroke="#6B6B6B"/>
-      {/* Inner tray outline */}
-      <path d="M8.21991 5.65234C8.21991 5.3762 8.44377 5.15234 8.71991 5.15234H11.7288C12.005 5.15234 12.2288 5.3762 12.2288 5.65234V10.3887H8.21991V5.65234Z" stroke="#6B6B6B"/>
-    </svg>
   );
 }
 
@@ -247,9 +307,10 @@ interface HumidityIndicatorProps {
   goodThreshold?: number;  // <= this is green
   fairThreshold?: number;  // <= this is orange, > is red
   onClick?: () => void;
+  compact?: boolean;  // Smaller version for grid layout
 }
 
-function HumidityIndicator({ humidity, goodThreshold = 40, fairThreshold = 60, onClick }: HumidityIndicatorProps) {
+function HumidityIndicator({ humidity, goodThreshold = 40, fairThreshold = 60, onClick, compact }: HumidityIndicatorProps) {
   const humidityValue = typeof humidity === 'string' ? parseInt(humidity, 10) : humidity;
   const good = typeof goodThreshold === 'number' ? goodThreshold : 40;
   const fair = typeof fairThreshold === 'number' ? fairThreshold : 60;
@@ -289,11 +350,11 @@ function HumidityIndicator({ humidity, goodThreshold = 40, fairThreshold = 60, o
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center justify-end gap-1 ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+      className={`flex items-center gap-1 ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
       title={`Humidity: ${humidityValue}% - ${statusText}${onClick ? ' (click for history)' : ''}`}
     >
-      <DropComponent className="w-3 h-4" />
-      <span className="text-xs font-medium tabular-nums w-8 text-right" style={{ color: textColor }}>{humidityValue}%</span>
+      <DropComponent className={compact ? "w-2.5 h-3" : "w-3 h-4"} />
+      <span className={`font-medium tabular-nums ${compact ? 'text-[10px]' : 'text-xs'}`} style={{ color: textColor }}>{humidityValue}%</span>
     </button>
   );
 }
@@ -304,9 +365,10 @@ interface TemperatureIndicatorProps {
   goodThreshold?: number;  // <= this is blue
   fairThreshold?: number;  // <= this is orange, > is red
   onClick?: () => void;
+  compact?: boolean;  // Smaller version for grid layout
 }
 
-function TemperatureIndicator({ temp, goodThreshold = 28, fairThreshold = 35, onClick }: TemperatureIndicatorProps) {
+function TemperatureIndicator({ temp, goodThreshold = 28, fairThreshold = 35, onClick, compact }: TemperatureIndicatorProps) {
   // Ensure thresholds are numbers
   const good = typeof goodThreshold === 'number' ? goodThreshold : 28;
   const fair = typeof fairThreshold === 'number' ? fairThreshold : 35;
@@ -336,8 +398,8 @@ function TemperatureIndicator({ temp, goodThreshold = 28, fairThreshold = 35, on
       className={`flex items-center gap-1 ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
       title={`Temperature: ${temp}°C - ${statusText}${onClick ? ' (click for history)' : ''}`}
     >
-      <ThermoComponent className="w-3 h-4" />
-      <span className="tabular-nums w-12 text-right" style={{ color: textColor }}>{temp}°C</span>
+      <ThermoComponent className={compact ? "w-2.5 h-3" : "w-3 h-4"} />
+      <span className={`tabular-nums text-right ${compact ? 'text-[10px] w-8' : 'w-12'}`} style={{ color: textColor }}>{temp}°C</span>
     </button>
   );
 }
@@ -354,6 +416,13 @@ function getAmsLabel(amsId: number | string, trayCount: number): string {
   const normalizedId = safeId >= 128 ? safeId - 128 : safeId;
   const letter = String.fromCharCode(65 + normalizedId); // 0=A, 1=B, 2=C, 3=D
   return isHt ? `HT-${letter}` : `AMS-${letter}`;
+}
+
+// Get fill bar color based on spool fill level
+function getFillBarColor(fillLevel: number): string {
+  if (fillLevel > 50) return '#00ae42'; // Green - good
+  if (fillLevel >= 15) return '#f59e0b'; // Amber - warning (<= 50%)
+  return '#ef4444'; // Red - critical (< 15%)
 }
 
 function formatTime(seconds: number): string {
@@ -615,6 +684,32 @@ function PrinterCard({
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
 
+  // Collect unique tray_info_idx values for cloud filament info lookup
+  const trayInfoIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (status?.ams) {
+      for (const ams of status.ams) {
+        for (const tray of ams.tray || []) {
+          if (tray.tray_info_idx) {
+            ids.add(tray.tray_info_idx);
+          }
+        }
+      }
+    }
+    if (status?.vt_tray?.tray_info_idx) {
+      ids.add(status.vt_tray.tray_info_idx);
+    }
+    return Array.from(ids);
+  }, [status?.ams, status?.vt_tray]);
+
+  // Fetch cloud filament info for tooltips (name includes color, also has K value)
+  const { data: filamentInfo } = useQuery({
+    queryKey: ['filamentInfo', trayInfoIds],
+    queryFn: () => api.getFilamentInfo(trayInfoIds),
+    enabled: trayInfoIds.length > 0,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
   // Cache WiFi signal to prevent it disappearing on updates
   const [cachedWifiSignal, setCachedWifiSignal] = useState<number | null>(null);
   useEffect(() => {
@@ -652,6 +747,19 @@ function PrinterCard({
     }
   }, [status?.ams]);
   const amsData = (status?.ams && status.ams.length > 0) ? status.ams : cachedAmsData.current;
+
+  // Cache tray_now to prevent flickering when 255 (unloaded) or undefined values come in
+  // Only update cache when we get a valid tray ID (0-253 or 254 for external)
+  const cachedTrayNow = useRef<number>(255);
+  const currentTrayNow = status?.tray_now;
+  // Update cache synchronously during render if we have a valid value
+  if (currentTrayNow !== undefined && currentTrayNow !== 255) {
+    cachedTrayNow.current = currentTrayNow;
+  }
+  // Use cached value if current is 255/undefined but we had a valid value before
+  const effectiveTrayNow = (currentTrayNow === undefined || currentTrayNow === 255)
+    ? cachedTrayNow.current
+    : currentTrayNow;
 
   // Fetch smart plug for this printer
   const { data: smartPlug } = useQuery({
@@ -1135,132 +1243,328 @@ function PrinterCard({
               );
             })()}
 
-            {/* AMS Units with Device Icons, Humidity & Temperature */}
-            {amsData && amsData.length > 0 && viewMode === 'expanded' && (
-              <div className="mt-3 space-y-2">
-                {amsData.map((ams) => {
-                  // For dual nozzle printers, determine which nozzle this AMS is connected to
-                  // Use actual ams.id for map lookup (map uses real IDs: 0-3 for AMS, 128+ for AMS-HT)
-                  const mappedExtruderId = amsExtruderMap[String(ams.id)];
-                  // Fallback: normalize ID for conventional mapping (0=R, 1=L)
-                  const normalizedId = ams.id >= 128 ? ams.id - 128 : ams.id;
-                  const extruderId = mappedExtruderId !== undefined
-                    ? mappedExtruderId
-                    : normalizedId; // Fallback: AMS 0 → extruder 0 (R), AMS 1 → extruder 1 (L)
-                  // Use printer.nozzle_count as primary source (stable), fallback to nozzle_2 temp
-                  const isDualNozzle = printer.nozzle_count === 2 || status?.temperatures?.nozzle_2 !== undefined;
-                  // extruder 0 = Right, extruder 1 = Left
-                  const isLeftNozzle = extruderId === 1;
-                  const isRightNozzle = extruderId === 0;
+            {/* AMS Units - 2-Column Grid Layout */}
+            {amsData && amsData.length > 0 && viewMode === 'expanded' && (() => {
+              // Separate regular AMS (4-tray) from HT AMS (1-tray)
+              const regularAms = amsData.filter(ams => ams.tray.length > 1);
+              const htAms = amsData.filter(ams => ams.tray.length === 1);
+              const isDualNozzle = printer.nozzle_count === 2 || status?.temperatures?.nozzle_2 !== undefined;
 
-                  // Get colors for the AMS icon (null for empty slots)
-                  const slotColors = ams.tray.map(tray =>
-                    tray.tray_color ? `#${tray.tray_color}` : (tray.tray_type ? '#333' : null)
-                  );
-                  const isHtAms = ams.tray.length === 1;
+              return (
+                <div className="mt-4 pt-3 border-t border-bambu-dark-tertiary/50">
+                  {/* Section Header */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-[10px] uppercase tracking-wider text-bambu-gray font-medium">
+                      Filaments
+                    </span>
+                    <div className="flex-1 h-px bg-bambu-dark-tertiary/30" />
+                  </div>
 
-                  return (
-                    <div key={ams.id} className="p-2 bg-bambu-dark rounded-lg">
-                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                        {/* Nozzle badge + AMS device icon */}
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          {isDualNozzle && (isLeftNozzle || isRightNozzle) && (
-                            <NozzleBadge side={isLeftNozzle ? 'L' : 'R'} />
-                          )}
-                          {isHtAms ? (
-                            <AMS1TrayIcon
-                              color={slotColors[0]}
-                              className="flex-shrink-0"
-                            />
-                          ) : (
-                            <AMS4TrayIcon
-                              colors={slotColors as (string | null)[]}
-                              className="flex-shrink-0"
-                            />
-                          )}
-                        </div>
+                  {/* AMS Content */}
+                  <div className="space-y-3">
+                    {/* Row 1-2: Regular AMS (4-tray) in 2-column grid */}
+                    {regularAms.length > 0 && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {regularAms.map((ams) => {
+                        const mappedExtruderId = amsExtruderMap[String(ams.id)];
+                        const normalizedId = ams.id >= 128 ? ams.id - 128 : ams.id;
+                        const extruderId = mappedExtruderId !== undefined ? mappedExtruderId : normalizedId;
+                        const isLeftNozzle = extruderId === 1;
+                        const isRightNozzle = extruderId === 0;
 
-                        {/* Label and filament info */}
-                        <div className="flex-1 min-w-0">
-                          <span className="text-xs text-bambu-gray font-medium">
-                            {getAmsLabel(ams.id, ams.tray.length)}
-                          </span>
-                          {/* Filament types and fill levels */}
-                          <div className="mt-0.5 text-[10px] flex items-start">
-                            {ams.tray.map((tray, i) => (
-                              <div key={i} className="flex items-start">
-                                <div className="flex flex-col">
-                                  <span className="text-bambu-gray/70 truncate max-w-[60px] sm:max-w-none">
-                                    {tray.tray_type ? (tray.tray_sub_brands || tray.tray_type) : '—'}
-                                  </span>
-                                  <span className="text-bambu-gray/50 truncate">
-                                    {tray.tray_type && tray.remain >= 0 ? `${tray.remain}%` : '—'}
-                                  </span>
-                                </div>
-                                {i < ams.tray.length - 1 && (
-                                  <span className="text-bambu-gray/50 mx-1 flex flex-col">
-                                    <span>·</span>
-                                    <span>·</span>
-                                  </span>
+                        return (
+                          <div key={ams.id} className="p-2.5 bg-bambu-dark rounded-lg border border-bambu-dark-tertiary/30">
+                            {/* Header: Label + Stats (no icon) */}
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-white font-medium">
+                                  {getAmsLabel(ams.id, ams.tray.length)}
+                                </span>
+                                {isDualNozzle && (isLeftNozzle || isRightNozzle) && (
+                                  <NozzleBadge side={isLeftNozzle ? 'L' : 'R'} />
                                 )}
                               </div>
-                            ))}
+                              {(ams.humidity != null || ams.temp != null) && (
+                                <div className="flex items-center gap-1.5">
+                                  {ams.humidity != null && (
+                                    <HumidityIndicator
+                                      humidity={ams.humidity}
+                                      goodThreshold={amsThresholds?.humidityGood}
+                                      fairThreshold={amsThresholds?.humidityFair}
+                                      onClick={() => setAmsHistoryModal({
+                                        amsId: ams.id,
+                                        amsLabel: getAmsLabel(ams.id, ams.tray.length),
+                                        mode: 'humidity',
+                                      })}
+                                      compact
+                                    />
+                                  )}
+                                  {ams.temp != null && (
+                                    <TemperatureIndicator
+                                      temp={ams.temp}
+                                      goodThreshold={amsThresholds?.tempGood}
+                                      fairThreshold={amsThresholds?.tempFair}
+                                      onClick={() => setAmsHistoryModal({
+                                        amsId: ams.id,
+                                        amsLabel: getAmsLabel(ams.id, ams.tray.length),
+                                        mode: 'temperature',
+                                      })}
+                                      compact
+                                    />
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            {/* Slots grid: 4 columns - always render 4 slots */}
+                            <div className="grid grid-cols-4 gap-1.5">
+                              {[0, 1, 2, 3].map((slotIdx) => {
+                                // Find tray data for this slot (may be undefined if data incomplete)
+                                // Use array index if available, as tray.id may not always be set
+                                const tray = ams.tray[slotIdx] || ams.tray.find(t => t.id === slotIdx);
+                                const hasFillLevel = tray?.tray_type && tray.remain >= 0;
+                                const isEmpty = !tray?.tray_type;
+                                // Check if this is the currently loaded tray
+                                // Global tray ID = ams.id * 4 + slot index (for standard AMS)
+                                const globalTrayId = ams.id * 4 + slotIdx;
+                                const isActive = effectiveTrayNow === globalTrayId;
+                                // Get cloud preset info if available
+                                const cloudInfo = tray?.tray_info_idx ? filamentInfo?.[tray.tray_info_idx] : null;
+
+                                // Build filament data for hover card
+                                const filamentData = tray?.tray_type ? {
+                                  vendor: (tray.tray_uuid ? 'Bambu Lab' : 'Generic') as 'Bambu Lab' | 'Generic',
+                                  profile: cloudInfo?.name || tray.tray_sub_brands || tray.tray_type,
+                                  colorName: getBambuColorName(tray.tray_id_name) || hexToBasicColorName(tray.tray_color),
+                                  colorHex: tray.tray_color || null,
+                                  kFactor: formatKValue(tray.k),
+                                  fillLevel: hasFillLevel ? tray.remain : null,
+                                } : null;
+
+                                const slotContent = (
+                                  <div
+                                    className={`bg-bambu-dark-tertiary rounded p-1 text-center cursor-default ${isEmpty ? 'opacity-50' : ''} ${isActive ? 'ring-2 ring-bambu-green ring-offset-1 ring-offset-bambu-dark' : ''}`}
+                                  >
+                                    <div
+                                      className="w-3.5 h-3.5 rounded-full mx-auto mb-0.5 border-2"
+                                      style={{
+                                        backgroundColor: tray?.tray_color ? `#${tray.tray_color}` : (tray?.tray_type ? '#333' : 'transparent'),
+                                        borderColor: isEmpty ? '#666' : 'rgba(255,255,255,0.1)',
+                                        borderStyle: isEmpty ? 'dashed' : 'solid',
+                                      }}
+                                    />
+                                    <div className="text-[9px] text-white font-bold truncate">
+                                      {tray?.tray_type || '—'}
+                                    </div>
+                                    {/* Fill bar */}
+                                    <div className="mt-1 h-1.5 bg-black/30 rounded-full overflow-hidden">
+                                      {hasFillLevel && tray ? (
+                                        <div
+                                          className="h-full rounded-full transition-all"
+                                          style={{
+                                            width: `${tray.remain}%`,
+                                            backgroundColor: getFillBarColor(tray.remain),
+                                          }}
+                                        />
+                                      ) : tray?.tray_type ? (
+                                        <div className="h-full w-full rounded-full bg-white/50 dark:bg-gray-500/40" />
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                );
+
+                                return filamentData ? (
+                                  <FilamentHoverCard key={slotIdx} data={filamentData}>
+                                    {slotContent}
+                                  </FilamentHoverCard>
+                                ) : (
+                                  <EmptySlotHoverCard key={slotIdx}>
+                                    {slotContent}
+                                  </EmptySlotHoverCard>
+                                );
+                              })}
+                            </div>
                           </div>
-                        </div>
-                        {/* Humidity/temp - responsive positioning */}
-                        {(ams.humidity != null || ams.temp != null) && (
-                          <div className="flex items-center gap-2 text-xs flex-shrink-0 ml-auto">
-                            {ams.humidity != null && (
-                              <HumidityIndicator
-                                humidity={ams.humidity}
-                                goodThreshold={amsThresholds?.humidityGood}
-                                fairThreshold={amsThresholds?.humidityFair}
-                                onClick={() => setAmsHistoryModal({
-                                  amsId: ams.id,
-                                  amsLabel: getAmsLabel(ams.id, ams.tray.length),
-                                  mode: 'humidity',
-                                })}
-                              />
-                            )}
-                            {ams.temp != null && (
-                              <TemperatureIndicator
-                                temp={ams.temp}
-                                goodThreshold={amsThresholds?.tempGood}
-                                fairThreshold={amsThresholds?.tempFair}
-                                onClick={() => setAmsHistoryModal({
-                                  amsId: ams.id,
-                                  amsLabel: getAmsLabel(ams.id, ams.tray.length),
-                                  mode: 'temperature',
-                                })}
-                              />
-                            )}
+                        );
+                      })}
+                    </div>
+                  )}
+
+                    {/* Row 3: HT AMS + External spools (same style as regular AMS, 4 across) */}
+                    {(htAms.length > 0 || (status.vt_tray && status.vt_tray.tray_type)) && (
+                      <div className="grid grid-cols-4 gap-3">
+                      {/* HT AMS units - name/badge top, slot left, stats right */}
+                      {htAms.map((ams) => {
+                        const mappedExtruderId = amsExtruderMap[String(ams.id)];
+                        const normalizedId = ams.id >= 128 ? ams.id - 128 : ams.id;
+                        const extruderId = mappedExtruderId !== undefined ? mappedExtruderId : normalizedId;
+                        const isLeftNozzle = extruderId === 1;
+                        const isRightNozzle = extruderId === 0;
+                        const tray = ams.tray[0];
+                        const hasFillLevel = tray?.tray_type && tray.remain >= 0;
+                        const isEmpty = !tray?.tray_type;
+                        // Check if this is the currently loaded tray
+                        // Global tray ID = ams.id * 4 + tray.id
+                        const globalTrayId = ams.id * 4 + (tray?.id ?? 0);
+                        const isActive = effectiveTrayNow === globalTrayId;
+                        // Get cloud preset info if available
+                        const cloudInfo = tray?.tray_info_idx ? filamentInfo?.[tray.tray_info_idx] : null;
+
+                        // Build filament data for hover card
+                        const filamentData = tray?.tray_type ? {
+                          vendor: (tray.tray_uuid ? 'Bambu Lab' : 'Generic') as 'Bambu Lab' | 'Generic',
+                          profile: cloudInfo?.name || tray.tray_sub_brands || tray.tray_type,
+                          colorName: getBambuColorName(tray.tray_id_name) || hexToBasicColorName(tray.tray_color),
+                          colorHex: tray.tray_color || null,
+                          kFactor: formatKValue(tray.k),
+                          fillLevel: hasFillLevel ? tray.remain : null,
+                        } : null;
+
+                        const slotContent = (
+                          <div
+                            className={`bg-bambu-dark-tertiary rounded p-1 text-center cursor-default ${isEmpty ? 'opacity-50' : ''} ${isActive ? 'ring-2 ring-bambu-green ring-offset-1 ring-offset-bambu-dark' : ''}`}
+                          >
+                            <div
+                              className="w-3.5 h-3.5 rounded-full mx-auto mb-0.5 border-2"
+                              style={{
+                                backgroundColor: tray?.tray_color ? `#${tray.tray_color}` : (tray?.tray_type ? '#333' : 'transparent'),
+                                borderColor: isEmpty ? '#666' : 'rgba(255,255,255,0.1)',
+                                borderStyle: isEmpty ? 'dashed' : 'solid',
+                              }}
+                            />
+                            <div className="text-[9px] text-white font-bold truncate">
+                              {tray?.tray_type || '—'}
+                            </div>
+                            {/* Fill bar */}
+                            <div className="mt-1 h-1.5 bg-black/30 rounded-full overflow-hidden">
+                              {hasFillLevel ? (
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{
+                                    width: `${tray.remain}%`,
+                                    backgroundColor: getFillBarColor(tray.remain),
+                                  }}
+                                />
+                              ) : tray?.tray_type ? (
+                                <div className="h-full w-full rounded-full bg-white/50 dark:bg-gray-500/40" />
+                              ) : null}
+                            </div>
                           </div>
-                        )}
+                        );
+
+                        return (
+                          <div key={ams.id} className="p-2.5 bg-bambu-dark rounded-lg border border-bambu-dark-tertiary/30">
+                            {/* Row 1: Label + Nozzle */}
+                            <div className="flex items-center gap-1 mb-2">
+                              <span className="text-[10px] text-white font-medium">
+                                {getAmsLabel(ams.id, ams.tray.length)}
+                              </span>
+                              {isDualNozzle && (isLeftNozzle || isRightNozzle) && (
+                                <NozzleBadge side={isLeftNozzle ? 'L' : 'R'} />
+                              )}
+                            </div>
+                            {/* Row 2: Slot (left) + Stats (right stacked) */}
+                            <div className="flex gap-1.5">
+                              {/* Slot - takes remaining width */}
+                              {filamentData ? (
+                                <FilamentHoverCard data={filamentData} className="flex-1">
+                                  {slotContent}
+                                </FilamentHoverCard>
+                              ) : (
+                                <EmptySlotHoverCard className="flex-1">
+                                  {slotContent}
+                                </EmptySlotHoverCard>
+                              )}
+                              {/* Stats stacked vertically: Temp on top, Humidity below */}
+                              {(ams.humidity != null || ams.temp != null) && (
+                                <div className="flex flex-col justify-center gap-1 shrink-0">
+                                  {ams.temp != null && (
+                                    <TemperatureIndicator
+                                      temp={ams.temp}
+                                      goodThreshold={amsThresholds?.tempGood}
+                                      fairThreshold={amsThresholds?.tempFair}
+                                      onClick={() => setAmsHistoryModal({
+                                        amsId: ams.id,
+                                        amsLabel: getAmsLabel(ams.id, ams.tray.length),
+                                        mode: 'temperature',
+                                      })}
+                                      compact
+                                    />
+                                  )}
+                                  {ams.humidity != null && (
+                                    <HumidityIndicator
+                                      humidity={ams.humidity}
+                                      goodThreshold={amsThresholds?.humidityGood}
+                                      fairThreshold={amsThresholds?.humidityFair}
+                                      onClick={() => setAmsHistoryModal({
+                                        amsId: ams.id,
+                                        amsLabel: getAmsLabel(ams.id, ams.tray.length),
+                                        mode: 'humidity',
+                                      })}
+                                      compact
+                                    />
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {/* External spool - name top, slot below (no stats) */}
+                      {status.vt_tray && status.vt_tray.tray_type && (() => {
+                        const extTray = status.vt_tray;
+                        // Check if external spool is active (tray_now = 254)
+                        const isExtActive = effectiveTrayNow === 254;
+                        // Get cloud preset info if available
+                        const extCloudInfo = extTray.tray_info_idx ? filamentInfo?.[extTray.tray_info_idx] : null;
+
+                        // Build filament data for hover card
+                        const extFilamentData = {
+                          vendor: (extTray.tray_uuid ? 'Bambu Lab' : 'Generic') as 'Bambu Lab' | 'Generic',
+                          profile: extCloudInfo?.name || extTray.tray_sub_brands || extTray.tray_type || 'Unknown',
+                          colorName: getBambuColorName(extTray.tray_id_name) || hexToBasicColorName(extTray.tray_color),
+                          colorHex: extTray.tray_color || null,
+                          kFactor: formatKValue(extTray.k),
+                          fillLevel: null, // External spool has unknown fill level
+                        };
+
+                        const extSlotContent = (
+                          <div className={`bg-bambu-dark-tertiary rounded p-1 text-center cursor-default ${isExtActive ? 'ring-2 ring-bambu-green ring-offset-1 ring-offset-bambu-dark' : ''}`}>
+                            <div
+                              className="w-3.5 h-3.5 rounded-full mx-auto mb-0.5 border-2"
+                              style={{
+                                backgroundColor: extTray.tray_color ? `#${extTray.tray_color}` : '#333',
+                                borderColor: isExtActive ? 'var(--accent)' : 'rgba(255,255,255,0.1)',
+                              }}
+                            />
+                            <div className="text-[9px] text-white font-bold truncate">
+                              {extTray.tray_type || 'Spool'}
+                            </div>
+                            {/* Unknown fill level - subtle bar */}
+                            <div className="mt-1 h-1.5 bg-black/30 rounded-full overflow-hidden">
+                              <div className="h-full w-full rounded-full bg-white/50 dark:bg-gray-500/40" />
+                            </div>
+                          </div>
+                        );
+
+                        return (
+                          <div className="p-2.5 bg-bambu-dark rounded-lg border border-bambu-dark-tertiary/30">
+                            {/* Row 1: Label */}
+                            <div className="flex items-center gap-1 mb-2">
+                              <span className="text-[10px] text-white font-medium">External</span>
+                            </div>
+                            {/* Row 2: Slot (full width since no stats) */}
+                            <FilamentHoverCard data={extFilamentData}>
+                              {extSlotContent}
+                            </FilamentHoverCard>
+                          </div>
+                        );
+                      })()}
                       </div>
-                    </div>
-                  );
-                })}
-                {/* External spool indicator */}
-                {status.vt_tray && status.vt_tray.tray_type && (
-                  <div className="p-2 bg-bambu-dark rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="w-10 h-10 rounded-full border-2 border-white/20 flex-shrink-0"
-                        style={{
-                          backgroundColor: status.vt_tray.tray_color ? `#${status.vt_tray.tray_color}` : '#333',
-                        }}
-                      />
-                      <div>
-                        <span className="text-xs text-bambu-gray font-medium">External</span>
-                        <p className="text-[10px] text-bambu-gray/70">
-                          {status.vt_tray.tray_sub_brands || status.vt_tray.tray_type || 'Spool'}
-                        </p>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              );
+            })()}
           </>
         )}
 
@@ -1362,11 +1666,17 @@ function PrinterCard({
                 variant="secondary"
                 size="sm"
                 onClick={() => {
-                  window.open(
-                    `/camera/${printer.id}`,
-                    `camera-${printer.id}`,
-                    'width=640,height=400,menubar=no,toolbar=no,location=no,status=no'
-                  );
+                  // Use saved window state or defaults
+                  const saved = localStorage.getItem('cameraWindowState');
+                  const state = saved ? JSON.parse(saved) : { width: 640, height: 400 };
+                  const features = [
+                    `width=${state.width}`,
+                    `height=${state.height}`,
+                    state.left !== undefined ? `left=${state.left}` : '',
+                    state.top !== undefined ? `top=${state.top}` : '',
+                    'menubar=no,toolbar=no,location=no,status=no',
+                  ].filter(Boolean).join(',');
+                  window.open(`/camera/${printer.id}`, `camera-${printer.id}`, features);
                 }}
                 disabled={!status?.connected}
                 title="Open camera in new window"

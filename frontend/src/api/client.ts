@@ -21,7 +21,7 @@ async function request<T>(
     throw new Error(message);
   }
 
-  return response.json();
+  return await response.json();
 }
 
 // Printer types
@@ -55,7 +55,8 @@ export interface AMSTray {
   tray_id_name: string | null;  // Bambu filament ID like "A00-Y2" (can decode to color)
   tray_info_idx: string | null;  // Filament preset ID like "GFA00" - maps to cloud setting_id
   remain: number;
-  k: number | null;  // Pressure advance value
+  k: number | null;  // Pressure advance value (from tray or K-profile lookup)
+  cali_idx: number | null;  // Calibration index for K-profile lookup
   tag_uid: string | null;  // RFID tag UID (any tag)
   tray_uuid: string | null;  // Bambu Lab spool UUID (32-char hex, only valid for Bambu Lab spools)
   nozzle_temp_min: number | null;  // Min nozzle temperature
@@ -544,6 +545,14 @@ export interface AppSettings {
   default_printer_id: number | null;
   // Telemetry
   telemetry_enabled: boolean;
+  // Dark mode theme settings
+  dark_style: 'classic' | 'glow' | 'vibrant';
+  dark_background: 'neutral' | 'warm' | 'cool' | 'oled' | 'slate' | 'forest';
+  dark_accent: 'green' | 'teal' | 'blue' | 'orange' | 'purple' | 'red';
+  // Light mode theme settings
+  light_style: 'classic' | 'glow' | 'vibrant';
+  light_background: 'neutral' | 'warm' | 'cool';
+  light_accent: 'green' | 'teal' | 'blue' | 'orange' | 'purple' | 'red';
 }
 
 export type AppSettingsUpdate = Partial<AppSettings>;
@@ -1756,6 +1765,11 @@ export const api = {
     request<FieldDefinitionsResponse>(`/cloud/fields/${presetType}`),
   getAllCloudFields: () =>
     request<Record<string, FieldDefinitionsResponse>>('/cloud/fields'),
+  getFilamentInfo: (settingIds: string[]) =>
+    request<Record<string, { name: string; k: number | null }>>('/cloud/filament-info', {
+      method: 'POST',
+      body: JSON.stringify(settingIds),
+    }),
 
   // Smart Plugs
   getSmartPlugs: () => request<SmartPlug[]>('/smart-plugs/'),

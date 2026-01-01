@@ -169,6 +169,16 @@ async def get_printer_status(printer_id: int, db: AsyncSession = Depends(get_db)
     ams_exists = False
     raw_data = state.raw_data or {}
 
+    # Build K-profile lookup map: cali_idx -> k_value
+    # This allows looking up the calibrated K value for each AMS slot
+    kprofile_map: dict[int, float] = {}
+    for kp in state.kprofiles or []:
+        if kp.slot_id is not None and kp.k_value:
+            try:
+                kprofile_map[kp.slot_id] = float(kp.k_value)
+            except (ValueError, TypeError):
+                pass
+
     if "ams" in raw_data and isinstance(raw_data["ams"], list):
         ams_exists = True
         for ams_data in raw_data["ams"]:
@@ -184,6 +194,13 @@ async def get_printer_status(printer_id: int, db: AsyncSession = Depends(get_db)
                 tray_uuid = tray_data.get("tray_uuid", "")
                 if tray_uuid in ("", "00000000000000000000000000000000"):
                     tray_uuid = None
+
+                # Get K value: first try tray's k field, then lookup from K-profiles
+                k_value = tray_data.get("k")
+                cali_idx = tray_data.get("cali_idx")
+                if k_value is None and cali_idx is not None and cali_idx in kprofile_map:
+                    k_value = kprofile_map[cali_idx]
+
                 trays.append(
                     AMSTray(
                         id=tray_data.get("id", 0),
@@ -193,7 +210,8 @@ async def get_printer_status(printer_id: int, db: AsyncSession = Depends(get_db)
                         tray_id_name=tray_data.get("tray_id_name"),
                         tray_info_idx=tray_data.get("tray_info_idx"),
                         remain=tray_data.get("remain", 0),
-                        k=tray_data.get("k"),
+                        k=k_value,
+                        cali_idx=cali_idx,
                         tag_uid=tag_uid,
                         tray_uuid=tray_uuid,
                         nozzle_temp_min=tray_data.get("nozzle_temp_min"),
@@ -239,13 +257,23 @@ async def get_printer_status(printer_id: int, db: AsyncSession = Depends(get_db)
         vt_tray_uuid = vt_data.get("tray_uuid", "")
         if vt_tray_uuid in ("", "00000000000000000000000000000000"):
             vt_tray_uuid = None
+
+        # Get K value: first try tray's k field, then lookup from K-profiles
+        vt_k_value = vt_data.get("k")
+        vt_cali_idx = vt_data.get("cali_idx")
+        if vt_k_value is None and vt_cali_idx is not None and vt_cali_idx in kprofile_map:
+            vt_k_value = kprofile_map[vt_cali_idx]
+
         vt_tray = AMSTray(
             id=254,  # Virtual tray ID
             tray_color=vt_data.get("tray_color"),
             tray_type=vt_data.get("tray_type"),
             tray_sub_brands=vt_data.get("tray_sub_brands"),
+            tray_id_name=vt_data.get("tray_id_name"),
+            tray_info_idx=vt_data.get("tray_info_idx"),
             remain=vt_data.get("remain", 0),
-            k=vt_data.get("k"),
+            k=vt_k_value,
+            cali_idx=vt_cali_idx,
             tag_uid=vt_tag_uid,
             tray_uuid=vt_tray_uuid,
             nozzle_temp_min=vt_data.get("nozzle_temp_min"),
@@ -977,7 +1005,7 @@ async def debug_simulate_print_complete(
         "timelapse_was_active": False,
     }
 
-    logger.info(f"[DEBUG] Simulating print complete for printer {printer_id}, archive {archive.id}")
+    logger.info(f"Simulating print complete for printer {printer_id}, archive {archive.id}")
 
     # Call the actual on_print_complete handler
     await on_print_complete(printer_id, data)

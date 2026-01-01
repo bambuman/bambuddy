@@ -12,6 +12,8 @@ import { api } from '../../api/client';
 vi.mock('../../api/client', () => ({
   api: {
     getAMSHistory: vi.fn(),
+    getSettings: vi.fn().mockResolvedValue({}),
+    updateSettings: vi.fn().mockResolvedValue({}),
   },
 }));
 

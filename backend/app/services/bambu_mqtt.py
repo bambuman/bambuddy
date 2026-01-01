@@ -733,9 +733,9 @@ class BambuMQTTClient:
                     parsed_tray_now = raw_tray_now if raw_tray_now is not None else 255
 
                 # H2D dual-nozzle printers report only slot number (0-3), not global tray ID
-                # Use pending_tray_target from our load command tracking for disambiguation
+                # Use active_extruder + ams_extruder_map to determine which AMS the slot belongs to
                 if parsed_tray_now >= 0 and parsed_tray_now <= 3:
-                    # Check if we have a pending target that matches this slot
+                    # First, check if we have a pending target that matches this slot
                     pending_target = self.state.pending_tray_target
                     if pending_target is not None:
                         pending_slot = pending_target % 4
@@ -758,28 +758,45 @@ class BambuMQTTClient:
                             # Clear pending target since it's stale
                             self.state.pending_tray_target = None
                     else:
-                        # No pending target - check if we already have a resolved global ID
-                        # that matches this slot (from a previous successful disambiguation)
-                        current_tray = self.state.tray_now
-                        if current_tray > 3 and current_tray != 255 and (current_tray % 4) == parsed_tray_now:
-                            # Current tray_now is already a valid global ID that matches this slot
-                            # Keep it (don't overwrite with raw slot number)
-                            logger.debug(
-                                f"[{self.serial_number}] H2D tray_now: keeping existing global ID {current_tray} "
-                                f"(matches incoming slot {parsed_tray_now})"
+                        # No pending target - use active_extruder + ams_extruder_map to disambiguate
+                        # Find which AMS is connected to the active extruder
+                        active_ext = self.state.active_extruder  # 0=right, 1=left
+                        ams_map = self.state.ams_extruder_map  # {ams_id: extruder_id}
+
+                        # Find the AMS connected to the active extruder
+                        active_ams_id = None
+                        for ams_id_str, ext_id in ams_map.items():
+                            if ext_id == active_ext:
+                                try:
+                                    active_ams_id = int(ams_id_str)
+                                except ValueError:
+                                    pass
+                                break
+
+                        if active_ams_id is not None:
+                            # Calculate global tray ID using the active AMS
+                            global_tray_id = active_ams_id * 4 + parsed_tray_now
+                            logger.info(
+                                f"[{self.serial_number}] H2D tray_now disambiguation: "
+                                f"slot {parsed_tray_now} + active_extruder {active_ext} -> AMS {active_ams_id} -> global ID {global_tray_id}"
                             )
+                            self.state.tray_now = global_tray_id
                         else:
-                            # No pending target and no valid existing global ID
-                            # For H2D with multiple AMS units, we can't reliably determine which AMS
-                            # the slot belongs to without a pending_tray_target from our load command.
-                            # Use slot number as-is - this may be incorrect for multi-AMS setups,
-                            # but it's better than guessing wrong based on unreliable heuristics.
-                            # The user can load filament via our API to get correct tracking.
-                            logger.warning(
-                                f"[{self.serial_number}] H2D tray_now: no pending target, "
-                                f"using slot {parsed_tray_now} as global ID (may be incorrect for multi-AMS)"
-                            )
-                            self.state.tray_now = parsed_tray_now
+                            # No AMS found for active extruder - check if we already have a resolved global ID
+                            current_tray = self.state.tray_now
+                            if current_tray > 3 and current_tray != 255 and (current_tray % 4) == parsed_tray_now:
+                                # Current tray_now is already a valid global ID that matches this slot
+                                logger.debug(
+                                    f"[{self.serial_number}] H2D tray_now: keeping existing global ID {current_tray} "
+                                    f"(matches incoming slot {parsed_tray_now})"
+                                )
+                            else:
+                                # Fallback: use slot as-is
+                                logger.warning(
+                                    f"[{self.serial_number}] H2D tray_now: no ams_extruder_map for active_extruder {active_ext}, "
+                                    f"using slot {parsed_tray_now} as global ID (may be incorrect for multi-AMS)"
+                                )
+                                self.state.tray_now = parsed_tray_now
                 else:
                     # tray_now > 3 means it's already a global ID, or 255 means unloaded
                     # Note: Do NOT clear pending_tray_target on tray_now=255 here.
@@ -806,15 +823,6 @@ class BambuMQTTClient:
 
         # Extract ams_extruder_map from each AMS unit's info field
         # According to OpenBambuAPI: info field bit 8 indicates which extruder (0=right, 1=left)
-        # Log AMS unit fields once to discover available fields
-        if not hasattr(self, "_ams_fields_logged") and ams_list:
-            first_unit = ams_list[0]
-            logger.info(f"[{self.serial_number}] AMS unit fields: {sorted(first_unit.keys())}")
-            for ams_unit in ams_list:
-                ams_id = ams_unit.get("id")
-                unit_info = {k: v for k, v in ams_unit.items() if k != "tray"}
-                logger.info(f"[{self.serial_number}] AMS {ams_id} data: {unit_info}")
-            self._ams_fields_logged = True
 
         ams_extruder_map = {}
         for ams_unit in ams_list:

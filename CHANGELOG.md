@@ -2,6 +2,40 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [0.1.6b4] - 2026-01-01
+
+### Added
+- **Camera popup window improvements**
+  - Auto-resize to fit video resolution on first open
+  - Persist window size and position to localStorage
+  - Restore saved window state for subsequent opens
+- **Slicer protocol handler** - OS detection for correct protocol (Windows: `bambustudio://`, macOS/Linux: `bambustudioopen://`)
+
+### Fixed
+- **Maintenance duration display** - Show weeks instead of imprecise months for better countdown precision
+- **Print hours display** - Convert large hour values to readable units (e.g., 478h → 3w, 100h → 4d)
+- **Printer hour counter** - Fixed runtime_seconds not incrementing during prints (first timestamp was set but never committed)
+
+### Changed
+- **Printer cards** - Refactored AMS section for better visual grouping and spacing
+
+## [0.1.6b3] - 2025-12-31
+
+### Added
+- **Customizable Theme System** - Comprehensive theme customization with independent settings for dark and light modes:
+  - **Style**: Classic (clean shadows), Glow (accent-colored glow effects), Vibrant (dramatic deep shadows)
+  - **Background**: Neutral, Warm, Cool (light mode) + OLED, Slate, Forest (dark mode only)
+  - **Accent Colors**: Green, Teal, Blue, Orange, Purple, Red
+  - All combinations work together (e.g., Glow style + Forest background + Teal accent)
+  - Settings sync across devices via database
+  - Live preview in Settings → Appearance
+
+### Fixed
+- **Printer hour counter** - Fixed bug in printer's hour counter display
+
+### Changed
+- **Sidebar power switch** - Added confirmation modal to sidebar's quick power switch
+
 ## [0.1.6b2] - 2025-12-29
 
 ### Added

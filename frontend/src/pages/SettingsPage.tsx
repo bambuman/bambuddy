@@ -21,12 +21,21 @@ import { virtualPrinterApi } from '../api/client';
 import { defaultNavItems, getDefaultView, setDefaultView } from '../components/Layout';
 import { availableLanguages } from '../i18n';
 import { useToast } from '../contexts/ToastContext';
+import { useTheme, type ThemeStyle, type DarkBackground, type LightBackground, type ThemeAccent } from '../contexts/ThemeContext';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Palette } from 'lucide-react';
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
   const { showToast, showPersistentToast, dismissToast } = useToast();
+  const {
+    mode,
+    darkStyle, darkBackground, darkAccent,
+    lightStyle, lightBackground, lightAccent,
+    setDarkStyle, setDarkBackground, setDarkAccent,
+    setLightStyle, setLightBackground, setLightAccent,
+  } = useTheme();
   const [localSettings, setLocalSettings] = useState<AppSettings | null>(null);
   const [showPlugModal, setShowPlugModal] = useState(false);
   const [editingPlug, setEditingPlug] = useState<SmartPlug | null>(null);
@@ -588,6 +597,121 @@ export function SettingsPage() {
 
           <Card>
             <CardHeader>
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Palette className="w-5 h-5" />
+                Appearance
+              </h2>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Dark Mode Settings */}
+              <div className={`space-y-3 p-4 rounded-lg border ${mode === 'dark' ? 'border-bambu-green bg-bambu-green/5' : 'border-bambu-dark-tertiary'}`}>
+                <h3 className="text-sm font-medium text-white flex items-center gap-2">
+                  Dark Mode
+                  {mode === 'dark' && <span className="text-xs text-bambu-green">(active)</span>}
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-bambu-gray mb-1">Background</label>
+                    <select
+                      value={darkBackground}
+                      onChange={(e) => { setDarkBackground(e.target.value as DarkBackground); showToast('Settings saved', 'success'); }}
+                      className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    >
+                      <option value="neutral">Neutral</option>
+                      <option value="warm">Warm</option>
+                      <option value="cool">Cool</option>
+                      <option value="oled">OLED Black</option>
+                      <option value="slate">Slate Blue</option>
+                      <option value="forest">Forest Green</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-bambu-gray mb-1">Accent</label>
+                    <select
+                      value={darkAccent}
+                      onChange={(e) => { setDarkAccent(e.target.value as ThemeAccent); showToast('Settings saved', 'success'); }}
+                      className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    >
+                      <option value="green">Green</option>
+                      <option value="teal">Teal</option>
+                      <option value="blue">Blue</option>
+                      <option value="orange">Orange</option>
+                      <option value="purple">Purple</option>
+                      <option value="red">Red</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-bambu-gray mb-1">Style</label>
+                    <select
+                      value={darkStyle}
+                      onChange={(e) => { setDarkStyle(e.target.value as ThemeStyle); showToast('Settings saved', 'success'); }}
+                      className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    >
+                      <option value="classic">Classic</option>
+                      <option value="glow">Glow</option>
+                      <option value="vibrant">Vibrant</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Light Mode Settings */}
+              <div className={`space-y-3 p-4 rounded-lg border ${mode === 'light' ? 'border-bambu-green bg-bambu-green/5' : 'border-bambu-dark-tertiary'}`}>
+                <h3 className="text-sm font-medium text-white flex items-center gap-2">
+                  Light Mode
+                  {mode === 'light' && <span className="text-xs text-bambu-green">(active)</span>}
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-bambu-gray mb-1">Background</label>
+                    <select
+                      value={lightBackground}
+                      onChange={(e) => { setLightBackground(e.target.value as LightBackground); showToast('Settings saved', 'success'); }}
+                      className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    >
+                      <option value="neutral">Neutral</option>
+                      <option value="warm">Warm</option>
+                      <option value="cool">Cool</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-bambu-gray mb-1">Accent</label>
+                    <select
+                      value={lightAccent}
+                      onChange={(e) => { setLightAccent(e.target.value as ThemeAccent); showToast('Settings saved', 'success'); }}
+                      className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    >
+                      <option value="green">Green</option>
+                      <option value="teal">Teal</option>
+                      <option value="blue">Blue</option>
+                      <option value="orange">Orange</option>
+                      <option value="purple">Purple</option>
+                      <option value="red">Red</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-bambu-gray mb-1">Style</label>
+                    <select
+                      value={lightStyle}
+                      onChange={(e) => { setLightStyle(e.target.value as ThemeStyle); showToast('Settings saved', 'success'); }}
+                      className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    >
+                      <option value="classic">Classic</option>
+                      <option value="glow">Glow</option>
+                      <option value="vibrant">Vibrant</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs text-bambu-gray">
+                Toggle between dark and light mode using the sun/moon icon in the sidebar.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <h2 className="text-lg font-semibold text-white">Archive Settings</h2>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -658,6 +782,10 @@ export function SettingsPage() {
             </CardContent>
           </Card>
 
+        </div>
+
+        {/* Second Column - Cost, AMS & Spoolman */}
+        <div className="space-y-6 flex-1 lg:max-w-md">
           <Card>
             <CardHeader>
               <h2 className="text-lg font-semibold text-white">Cost Tracking</h2>
@@ -730,10 +858,7 @@ export function SettingsPage() {
               </div>
             </CardContent>
           </Card>
-        </div>
 
-        {/* Second Column - AMS & Spoolman */}
-        <div className="space-y-6 flex-1 lg:max-w-md">
           <Card>
             <CardHeader>
               <h2 className="text-lg font-semibold text-white">AMS Display Thresholds</h2>

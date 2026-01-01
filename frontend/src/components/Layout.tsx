@@ -64,7 +64,7 @@ export function setDefaultView(path: string) {
 export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { theme, toggleTheme } = useTheme();
+  const { mode, toggleMode } = useTheme();
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const [sidebarExpanded, setSidebarExpanded] = useState(() => {
@@ -300,7 +300,7 @@ export function Layout() {
             <Menu className="w-6 h-6 text-white" />
           </button>
           <img
-            src={theme === 'dark' ? '/img/bambuddy_logo_dark.png' : '/img/bambuddy_logo_light.png'}
+            src={mode === 'dark' ? '/img/bambuddy_logo_dark.png' : '/img/bambuddy_logo_light.png'}
             alt="Bambuddy"
             className="h-8 ml-3"
           />
@@ -326,7 +326,7 @@ export function Layout() {
         {/* Logo */}
         <div className={`border-b border-bambu-dark-tertiary flex items-center justify-center ${isMobile || sidebarExpanded ? 'p-4' : 'p-2'}`}>
           <img
-            src={theme === 'dark' ? '/img/bambuddy_logo_dark.png' : '/img/bambuddy_logo_light.png'}
+            src={mode === 'dark' ? '/img/bambuddy_logo_dark.png' : '/img/bambuddy_logo_light.png'}
             alt="Bambuddy"
             className={isMobile || sidebarExpanded ? 'h-16 w-auto' : 'h-8 w-8 object-cover object-left'}
           />
@@ -379,7 +379,7 @@ export function Layout() {
                         <img
                           src={`/api/v1/external-links/${link.id}/icon`}
                           alt=""
-                          className={`w-5 h-5 flex-shrink-0 ${theme === 'dark' ? 'invert opacity-[0.65]' : 'opacity-60'}`}
+                          className={`w-5 h-5 flex-shrink-0 ${mode === 'dark' ? 'invert opacity-[0.65]' : 'opacity-60'}`}
                         />
                       ) : (
                         LinkIcon && <LinkIcon className="w-5 h-5 flex-shrink-0" />
@@ -500,11 +500,11 @@ export function Layout() {
                   <Keyboard className="w-5 h-5" />
                 </button>
                 <button
-                  onClick={toggleTheme}
+                  onClick={toggleMode}
                   className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
-                  title={theme === 'dark' ? t('nav.switchToLight') : t('nav.switchToDark')}
+                  title={mode === 'dark' ? t('nav.switchToLight') : t('nav.switchToDark')}
                 >
-                  {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                  {mode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                 </button>
               </div>
               {/* Bottom row: version */}
@@ -577,11 +577,11 @@ export function Layout() {
                 <Keyboard className="w-5 h-5" />
               </button>
               <button
-                onClick={toggleTheme}
+                onClick={toggleMode}
                 className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
-                title={theme === 'dark' ? t('nav.switchToLight') : t('nav.switchToDark')}
+                title={mode === 'dark' ? t('nav.switchToLight') : t('nav.switchToDark')}
               >
-                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                {mode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
             </div>
           )}

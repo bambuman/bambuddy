@@ -338,6 +338,15 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None) ->
     vt_tray = None
     raw_data = state.raw_data or {}
 
+    # Build K-profile lookup map: cali_idx -> k_value
+    kprofile_map: dict[int, float] = {}
+    for kp in state.kprofiles or []:
+        if kp.slot_id is not None and kp.k_value:
+            try:
+                kprofile_map[kp.slot_id] = float(kp.k_value)
+            except (ValueError, TypeError):
+                pass
+
     if "ams" in raw_data and isinstance(raw_data["ams"], list):
         for ams_data in raw_data["ams"]:
             trays = []
@@ -348,16 +357,28 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None) ->
                 tray_uuid = tray.get("tray_uuid")
                 if tray_uuid in ("", "00000000000000000000000000000000"):
                     tray_uuid = None
+
+                # Get K value: first try tray's k field, then lookup from K-profiles
+                k_value = tray.get("k")
+                cali_idx = tray.get("cali_idx")
+                if k_value is None and cali_idx is not None and cali_idx in kprofile_map:
+                    k_value = kprofile_map[cali_idx]
+
                 trays.append(
                     {
                         "id": tray.get("id", 0),
                         "tray_color": tray.get("tray_color"),
                         "tray_type": tray.get("tray_type"),
                         "tray_sub_brands": tray.get("tray_sub_brands"),
+                        "tray_id_name": tray.get("tray_id_name"),
+                        "tray_info_idx": tray.get("tray_info_idx"),
                         "remain": tray.get("remain", 0),
-                        "k": tray.get("k"),
+                        "k": k_value,
+                        "cali_idx": cali_idx,
                         "tag_uid": tag_uid,
                         "tray_uuid": tray_uuid,
+                        "nozzle_temp_min": tray.get("nozzle_temp_min"),
+                        "nozzle_temp_max": tray.get("nozzle_temp_max"),
                     }
                 )
             # Prefer humidity_raw (actual percentage) over humidity (index 1-5)
@@ -396,13 +417,30 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None) ->
         vt_tag_uid = vt_data.get("tag_uid")
         if vt_tag_uid in ("", "0000000000000000"):
             vt_tag_uid = None
+        vt_tray_uuid = vt_data.get("tray_uuid")
+        if vt_tray_uuid in ("", "00000000000000000000000000000000"):
+            vt_tray_uuid = None
+
+        # Get K value for vt_tray
+        vt_k_value = vt_data.get("k")
+        vt_cali_idx = vt_data.get("cali_idx")
+        if vt_k_value is None and vt_cali_idx is not None and vt_cali_idx in kprofile_map:
+            vt_k_value = kprofile_map[vt_cali_idx]
+
         vt_tray = {
             "id": 254,
             "tray_color": vt_data.get("tray_color"),
             "tray_type": vt_data.get("tray_type"),
             "tray_sub_brands": vt_data.get("tray_sub_brands"),
+            "tray_id_name": vt_data.get("tray_id_name"),
+            "tray_info_idx": vt_data.get("tray_info_idx"),
             "remain": vt_data.get("remain", 0),
+            "k": vt_k_value,
+            "cali_idx": vt_cali_idx,
             "tag_uid": vt_tag_uid,
+            "tray_uuid": vt_tray_uuid,
+            "nozzle_temp_min": vt_data.get("nozzle_temp_min"),
+            "nozzle_temp_max": vt_data.get("nozzle_temp_max"),
         }
 
     # Get ams_extruder_map from raw_data (populated by MQTT handler from AMS info field)
