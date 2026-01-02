@@ -255,6 +255,8 @@ Open **http://localhost:8000** in your browser.
 
 > **Multi-architecture support:** Pre-built images are available for `linux/amd64` and `linux/arm64` (Raspberry Pi 4/5).
 
+> **macOS/Windows users:** Docker Desktop doesn't support `network_mode: host`. Edit docker-compose.yml: comment out `network_mode: host` and uncomment the `ports:` section. Printer discovery won't work - add printers manually by IP.
+
 <details>
 <summary><strong>Docker Configuration & Commands</strong></summary>
 
