@@ -44,7 +44,7 @@ export function SettingsPage() {
   const [editingTemplate, setEditingTemplate] = useState<NotificationTemplate | null>(null);
   const [showLogViewer, setShowLogViewer] = useState(false);
   const [defaultView, setDefaultViewState] = useState<string>(getDefaultView());
-  const [activeTab, setActiveTab] = useState<'general' | 'plugs' | 'notifications' | 'apikeys' | 'virtual-printer'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'plugs' | 'notifications' | 'filament' | 'apikeys' | 'virtual-printer'>('general');
   const [showCreateAPIKey, setShowCreateAPIKey] = useState(false);
   const [newAPIKeyName, setNewAPIKeyName] = useState('');
   const [newAPIKeyPermissions, setNewAPIKeyPermissions] = useState({
@@ -449,6 +449,17 @@ export function SettingsPage() {
               {notificationProviders.length}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setActiveTab('filament')}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2 ${
+            activeTab === 'filament'
+              ? 'text-bambu-green border-bambu-green'
+              : 'text-bambu-gray hover:text-white border-transparent'
+          }`}
+        >
+          <Droplets className="w-4 h-4" />
+          Filament
         </button>
         <button
           onClick={() => setActiveTab('apikeys')}
@@ -992,8 +1003,6 @@ export function SettingsPage() {
               </div>
             </CardContent>
           </Card>
-
-          <SpoolmanSettings />
         </div>
 
         {/* Third Column - Updates */}
@@ -1909,6 +1918,13 @@ export function SettingsPage() {
       {/* Virtual Printer Tab */}
       {activeTab === 'virtual-printer' && (
         <VirtualPrinterSettings />
+      )}
+
+      {/* Filament Tab */}
+      {activeTab === 'filament' && (
+        <div className="max-w-2xl">
+          <SpoolmanSettings />
+        </div>
       )}
 
       {/* Delete API Key Confirmation */}
