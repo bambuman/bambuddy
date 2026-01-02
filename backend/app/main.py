@@ -604,13 +604,19 @@ async def on_print_start(printer_id: int, data: dict):
         # If still not found, try listing /cache to find matching file
         if not downloaded_filename and (filename or subtask_name):
             search_term = (subtask_name or filename).lower().replace(".gcode", "").replace(".3mf", "")
+            logger.info(f"Direct FTP download failed, listing /cache to find '{search_term}'")
             try:
                 cache_files = await list_files_async(printer.ip_address, printer.access_code, "/cache")
+                threemf_files = [f.get("name") for f in cache_files if f.get("name", "").endswith(".3mf")]
+                logger.info(
+                    f"Found {len(threemf_files)} 3MF files in /cache: {threemf_files[:5]}{'...' if len(threemf_files) > 5 else ''}"
+                )
                 for f in cache_files:
                     if f.get("is_directory"):
                         continue
                     fname = f.get("name", "")
                     if fname.endswith(".3mf") and search_term in fname.lower():
+                        logger.info(f"Found matching file: {fname}")
                         temp_path = app_settings.archive_dir / "temp" / fname
                         temp_path.parent.mkdir(parents=True, exist_ok=True)
                         if await download_file_async(
@@ -627,10 +633,81 @@ async def on_print_start(printer_id: int, data: dict):
 
         if not downloaded_filename or not temp_path:
             logger.warning(f"Could not find 3MF file for print: {filename or subtask_name}")
-            # Send notification without archive data (file not found)
-            if not notification_sent:
-                await _send_print_start_notification(printer_id, data, logger=logger)
-            return
+            # Create a fallback archive without 3MF data so the print is still tracked
+            # This commonly happens with P1S/A1 printers where FTP has file size limitations
+            try:
+                from backend.app.models.archive import PrintArchive
+
+                # Derive print name from subtask_name or filename
+                print_name = subtask_name or filename
+                if print_name:
+                    # Clean up the name (remove extensions, path parts)
+                    print_name = print_name.split("/")[-1]
+                    print_name = print_name.replace(".gcode.3mf", "").replace(".gcode", "").replace(".3mf", "")
+                else:
+                    print_name = "Unknown Print"
+
+                # Create minimal archive entry
+                fallback_archive = PrintArchive(
+                    printer_id=printer_id,
+                    filename=filename or f"{print_name}.3mf",
+                    file_path="",  # Empty - no 3MF file available
+                    file_size=0,
+                    print_name=print_name,
+                    status="printing",
+                    started_at=datetime.now(),
+                    extra_data={"no_3mf_available": True, "original_subtask": subtask_name, "_print_data": data},
+                )
+
+                db.add(fallback_archive)
+                await db.commit()
+                await db.refresh(fallback_archive)
+
+                logger.info(f"Created fallback archive {fallback_archive.id} for {print_name} (no 3MF available)")
+
+                # Track as active print
+                _active_prints[(printer_id, fallback_archive.filename)] = fallback_archive.id
+                if filename:
+                    _active_prints[(printer_id, filename)] = fallback_archive.id
+                if subtask_name:
+                    _active_prints[(printer_id, f"{subtask_name}.3mf")] = fallback_archive.id
+                    _active_prints[(printer_id, subtask_name)] = fallback_archive.id
+
+                # Record starting energy if smart plug available
+                try:
+                    plug_result = await db.execute(select(SmartPlug).where(SmartPlug.printer_id == printer_id))
+                    plug = plug_result.scalar_one_or_none()
+                    if plug:
+                        energy = await tasmota_service.get_energy(plug)
+                        if energy and energy.get("total") is not None:
+                            _print_energy_start[fallback_archive.id] = energy["total"]
+                            logger.info(
+                                f"[ENERGY] Recorded starting energy for fallback archive {fallback_archive.id}: {energy['total']} kWh"
+                            )
+                except Exception as e:
+                    logger.warning(f"Failed to record starting energy for fallback: {e}")
+
+                # Send WebSocket notification
+                await ws_manager.send_archive_created(
+                    {
+                        "id": fallback_archive.id,
+                        "printer_id": fallback_archive.printer_id,
+                        "filename": fallback_archive.filename,
+                        "print_name": fallback_archive.print_name,
+                        "status": fallback_archive.status,
+                    }
+                )
+
+                # Send notification without archive data (file not found)
+                if not notification_sent:
+                    await _send_print_start_notification(printer_id, data, logger=logger)
+                return
+            except Exception as e:
+                logger.error(f"Failed to create fallback archive: {e}")
+                # Send notification without archive data (file not found)
+                if not notification_sent:
+                    await _send_print_start_notification(printer_id, data, logger=logger)
+                return
 
         try:
             # Archive the file with status "printing"

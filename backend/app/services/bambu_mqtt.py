@@ -698,12 +698,15 @@ class BambuMQTTClient:
         import hashlib
 
         # Handle nested ams structure: {"ams": {"ams": [...]}} or {"ams": [...]}
-        if isinstance(ams_data, dict) and "ams" in ams_data:
-            ams_list = ams_data["ams"]
+        # Also handle P1S partial updates: {"tray_now": ..., "tray_tar": ...} without "ams" key
+        ams_list = None
+        if isinstance(ams_data, dict):
+            if "ams" in ams_data:
+                ams_list = ams_data["ams"]
             # Log all AMS dict fields to debug tray_now for H2D dual-nozzle
             non_list_fields = {k: v for k, v in ams_data.items() if k != "ams"}
             if non_list_fields:
-                logger.info(f"[{self.serial_number}] AMS dict fields: {non_list_fields}")
+                logger.debug(f"[{self.serial_number}] AMS dict fields: {non_list_fields}")
 
             # IMPORTANT: Parse ams_status FIRST before tray_now, so we have fresh status
             # when checking if we're in filament change mode for tray_now disambiguation
@@ -813,6 +816,12 @@ class BambuMQTTClient:
 
             # NOTE: ams_status is parsed BEFORE tray_now (see above) to ensure correct
             # state when checking filament change mode for H2D disambiguation
+
+            # P1S/P1P send partial updates without "ams" key - this is valid, not an error
+            # We've already processed the status fields above, so just return if no ams list
+            if ams_list is None:
+                logger.debug(f"[{self.serial_number}] AMS partial update (no tray data)")
+                return
         elif isinstance(ams_data, list):
             ams_list = ams_data
         else:
