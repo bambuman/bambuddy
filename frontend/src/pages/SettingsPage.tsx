@@ -215,8 +215,12 @@ export function SettingsPage() {
 
   const applyUpdateMutation = useMutation({
     mutationFn: api.applyUpdate,
-    onSuccess: () => {
-      refetchUpdateStatus();
+    onSuccess: (data) => {
+      if (data.is_docker) {
+        showToast(data.message, 'error');
+      } else {
+        refetchUpdateStatus();
+      }
     },
   });
 
@@ -1120,6 +1124,15 @@ export function SettingsPage() {
                     ) : updateStatus?.status === 'error' ? (
                       <div className="mt-3 p-2 bg-red-500/20 rounded text-sm text-red-400">
                         {updateStatus.error || updateStatus.message}
+                      </div>
+                    ) : updateCheck?.is_docker ? (
+                      <div className="mt-3 p-3 bg-bambu-dark-tertiary rounded-lg">
+                        <p className="text-sm text-bambu-gray mb-2">
+                          Update via Docker Compose:
+                        </p>
+                        <code className="block text-xs bg-bambu-dark p-2 rounded text-bambu-green font-mono">
+                          docker compose pull && docker compose up -d
+                        </code>
                       </div>
                     ) : (
                       <Button

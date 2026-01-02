@@ -1162,6 +1162,8 @@ export interface UpdateCheckResult {
   published_at?: string;
   error?: string;
   message?: string;
+  is_docker?: boolean;
+  update_method?: 'docker' | 'git';
 }
 
 export interface UpdateStatus {
@@ -2071,7 +2073,7 @@ export const api = {
   getVersion: () => request<VersionInfo>('/updates/version'),
   checkForUpdates: () => request<UpdateCheckResult>('/updates/check'),
   applyUpdate: () =>
-    request<{ success: boolean; message: string; status: UpdateStatus }>('/updates/apply', {
+    request<{ success: boolean; message: string; status?: UpdateStatus; is_docker?: boolean }>('/updates/apply', {
       method: 'POST',
     }),
   getUpdateStatus: () => request<UpdateStatus>('/updates/status'),
