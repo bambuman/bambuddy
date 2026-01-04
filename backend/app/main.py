@@ -1737,6 +1737,7 @@ async def lifespan(app: FastAPI):
         if vp_enabled and vp_enabled.lower() == "true":
             vp_access_code = await get_setting(db, "virtual_printer_access_code") or ""
             vp_mode = await get_setting(db, "virtual_printer_mode") or "immediate"
+            vp_model = await get_setting(db, "virtual_printer_model") or ""
 
             if vp_access_code:
                 try:
@@ -1744,8 +1745,9 @@ async def lifespan(app: FastAPI):
                         enabled=True,
                         access_code=vp_access_code,
                         mode=vp_mode,
+                        model=vp_model,
                     )
-                    logging.info("Virtual printer started")
+                    logging.info(f"Virtual printer started (model={vp_model or 'default'})")
                 except Exception as e:
                     logging.warning(f"Failed to start virtual printer: {e}")
 
