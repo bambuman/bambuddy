@@ -20,7 +20,7 @@ All notable changes to Bambuddy will be documented in this file.
   - Dropdown in Settings > Virtual Printer to select model
   - Supports X1 series (X1C, X1, X1E), P series (P1S, P1P, P2S), A1 series (A1, A1 Mini), and H2 series (H2D, H2C, H2S)
   - Affects how slicers detect and interact with the virtual printer
-  - Model change requires disabling/re-enabling the virtual printer
+  - Model change automatically restarts the virtual printer (no manual disable/enable needed)
   - Models sorted alphabetically in dropdown
 - **Pending upload delete confirmation** - Confirmation modal when discarding pending uploads in queue review mode
 
@@ -33,6 +33,12 @@ All notable changes to Bambuddy will be documented in this file.
 - **Virtual printer serial prefixes** - Fixed serial number prefixes to match real printers:
   - Based on actual Bambu Lab serial number format (MMM??RYMDDUUUUU)
   - X1C=00M, P1S=01P, P1P=01S, P2S=22E, A1=039, A1M=030, H2D=094, X1E=03W
+- **Virtual printer startup model** - Fixed model not loading from database on container restart:
+  - Virtual printer now correctly restores the saved model on startup
+  - Previously always started with default X1C model regardless of saved setting
+- **Virtual printer model change** - Fixed model changes not taking effect while running:
+  - Model changes now automatically restart the virtual printer
+  - Removed frontend restriction that required manual disable/enable
 - **Docker certificate persistence** - Fixed virtual printer certificate storage:
   - Removed unused `bambuddy_vprinter` volume (was mounting to wrong path)
   - Certificates now correctly persist in `bambuddy_data` volume
@@ -41,14 +47,17 @@ All notable changes to Bambuddy will be documented in this file.
 ### Changed
 - **Virtual printer setup documentation** - Improved setup instructions:
   - Prominent "Setup Required" warning in UI linking to documentation
-  - Certificate must be appended to slicer's printer.cer file (not system cert store)
+  - Certificate must **replace** the last cert in slicer's printer.cer file (not append!)
+  - Clear guidance: one CA only per slicer, replace when switching hosts
   - Platform-specific instructions for Linux, Docker, macOS, Windows, Unraid, Synology, TrueNAS, Proxmox
+  - Added troubleshooting for TLS connection errors
 
 ### Tests
 - Added integration tests for print queue API endpoints (16 new tests)
 - Tests cover queue CRUD, manual_start flag, and start/cancel endpoints
 - Added unit tests for virtual printer model configuration (3 new tests)
 - Updated VirtualPrinterSettings tests for new UI layout and model codes
+- Fixed virtual printer tests with outdated model codes (BL-P001 → 3DPrinter-X1-Carbon)
 
 ## [0.1.6b5] - 2026-01-02
 
