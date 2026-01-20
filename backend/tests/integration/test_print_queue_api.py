@@ -540,3 +540,197 @@ class TestQueueCancelEndpoint:
 
         response = await async_client.post(f"/api/v1/queue/{item.id}/cancel")
         assert response.status_code == 400
+
+
+class TestQueueLibraryFileSupport:
+    """Tests for queue items with library_file_id (instead of archive_id)."""
+
+    @pytest.fixture
+    async def printer_factory(self, db_session):
+        """Factory to create test printers."""
+        _counter = [0]
+
+        async def _create_printer(**kwargs):
+            from backend.app.models.printer import Printer
+
+            _counter[0] += 1
+            counter = _counter[0]
+
+            defaults = {
+                "name": f"Library Test Printer {counter}",
+                "ip_address": f"192.168.1.{150 + counter}",
+                "serial_number": f"TESTLIB{counter:04d}",
+                "access_code": "12345678",
+                "model": "X1C",
+            }
+            defaults.update(kwargs)
+
+            printer = Printer(**defaults)
+            db_session.add(printer)
+            await db_session.commit()
+            await db_session.refresh(printer)
+            return printer
+
+        return _create_printer
+
+    @pytest.fixture
+    async def library_file_factory(self, db_session):
+        """Factory to create test library files."""
+        _counter = [0]
+
+        async def _create_library_file(**kwargs):
+            from backend.app.models.library import LibraryFile
+
+            _counter[0] += 1
+            counter = _counter[0]
+
+            defaults = {
+                "filename": f"library_test_{counter}.3mf",
+                "file_path": f"/test/library/library_test_{counter}.3mf",
+                "file_size": 2048,
+                "file_type": "3mf",
+                "file_metadata": {"print_name": f"Library Print {counter}", "print_time_seconds": 3600},
+            }
+            defaults.update(kwargs)
+
+            lib_file = LibraryFile(**defaults)
+            db_session.add(lib_file)
+            await db_session.commit()
+            await db_session.refresh(lib_file)
+            return lib_file
+
+        return _create_library_file
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_add_to_queue_with_library_file(
+        self, async_client: AsyncClient, printer_factory, library_file_factory, db_session
+    ):
+        """Verify item can be added to queue using library_file_id instead of archive_id."""
+        printer = await printer_factory()
+        lib_file = await library_file_factory()
+
+        data = {
+            "printer_id": printer.id,
+            "library_file_id": lib_file.id,
+        }
+        response = await async_client.post("/api/v1/queue/", json=data)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["printer_id"] == printer.id
+        assert result["library_file_id"] == lib_file.id
+        assert result["archive_id"] is None
+        assert result["status"] == "pending"
+        assert result["library_file_name"] == "Library Print 1"
+        assert result["print_time_seconds"] == 3600
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_add_to_queue_library_file_with_options(
+        self, async_client: AsyncClient, printer_factory, library_file_factory, db_session
+    ):
+        """Verify library file queue item can have all options set."""
+        printer = await printer_factory()
+        lib_file = await library_file_factory()
+
+        data = {
+            "printer_id": printer.id,
+            "library_file_id": lib_file.id,
+            "ams_mapping": [1, 2, -1, -1],
+            "plate_id": 2,
+            "bed_levelling": False,
+            "timelapse": True,
+            "manual_start": True,
+        }
+        response = await async_client.post("/api/v1/queue/", json=data)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["library_file_id"] == lib_file.id
+        assert result["ams_mapping"] == [1, 2, -1, -1]
+        assert result["plate_id"] == 2
+        assert result["bed_levelling"] is False
+        assert result["timelapse"] is True
+        assert result["manual_start"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_add_to_queue_requires_archive_or_library_file(
+        self, async_client: AsyncClient, printer_factory, db_session
+    ):
+        """Verify 400 error when neither archive_id nor library_file_id provided."""
+        printer = await printer_factory()
+
+        data = {
+            "printer_id": printer.id,
+        }
+        response = await async_client.post("/api/v1/queue/", json=data)
+        assert response.status_code == 400
+        assert (
+            "archive_id" in response.json()["detail"].lower() or "library_file_id" in response.json()["detail"].lower()
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_update_queue_item_with_library_file(
+        self, async_client: AsyncClient, printer_factory, library_file_factory, db_session
+    ):
+        """Verify queue item with library_file_id can be updated."""
+        from backend.app.models.print_queue import PrintQueueItem
+
+        printer = await printer_factory()
+        lib_file = await library_file_factory()
+
+        # Create queue item directly
+        item = PrintQueueItem(
+            printer_id=printer.id,
+            library_file_id=lib_file.id,
+            status="pending",
+            position=1,
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        # Update the item
+        response = await async_client.patch(
+            f"/api/v1/queue/{item.id}",
+            json={"auto_off_after": True, "plate_id": 3},
+        )
+        assert response.status_code == 200
+        result = response.json()
+        assert result["auto_off_after"] is True
+        assert result["plate_id"] == 3
+        assert result["library_file_id"] == lib_file.id
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_list_queue_includes_library_file_info(
+        self, async_client: AsyncClient, printer_factory, library_file_factory, db_session
+    ):
+        """Verify queue list includes library file metadata."""
+        from backend.app.models.print_queue import PrintQueueItem
+
+        printer = await printer_factory()
+        lib_file = await library_file_factory(
+            file_metadata={"print_name": "Custom Print Name", "print_time_seconds": 7200}
+        )
+
+        item = PrintQueueItem(
+            printer_id=printer.id,
+            library_file_id=lib_file.id,
+            status="pending",
+            position=1,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await async_client.get("/api/v1/queue/")
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) >= 1
+
+        # Find our item
+        our_item = next((i for i in items if i["library_file_id"] == lib_file.id), None)
+        assert our_item is not None
+        assert our_item["library_file_name"] == "Custom Print Name"
+        assert our_item["print_time_seconds"] == 7200

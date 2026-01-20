@@ -46,6 +46,7 @@ import type {
 } from '../api/client';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { PrintModal } from '../components/PrintModal';
 import { useToast } from '../contexts/ToastContext';
 
 type SortField = 'name' | 'date' | 'size' | 'type' | 'prints';
@@ -695,9 +696,10 @@ interface FileCardProps {
   onDelete: (id: number) => void;
   onDownload: (id: number) => void;
   onAddToQueue?: (id: number) => void;
+  onPrint?: (file: LibraryFileListItem) => void;
 }
 
-function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQueue }: FileCardProps) {
+function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQueue, onPrint }: FileCardProps) {
   const [showActions, setShowActions] = useState(false);
 
   return (
@@ -771,12 +773,21 @@ function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQue
           <>
             <div className="fixed inset-0 z-10" onClick={() => setShowActions(false)} />
             <div className="absolute right-0 bottom-8 z-20 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl py-1 min-w-[140px]">
-              {onAddToQueue && isSlicedFilename(file.filename) && (
+              {onPrint && isSlicedFilename(file.filename) && (
                 <button
                   className="w-full px-3 py-1.5 text-left text-sm text-bambu-green hover:bg-bambu-dark flex items-center gap-2"
-                  onClick={() => { onAddToQueue(file.id); setShowActions(false); }}
+                  onClick={() => { onPrint(file); setShowActions(false); }}
                 >
                   <Printer className="w-3.5 h-3.5" />
+                  Print
+                </button>
+              )}
+              {onAddToQueue && isSlicedFilename(file.filename) && (
+                <button
+                  className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-bambu-dark flex items-center gap-2"
+                  onClick={() => { onAddToQueue(file.id); setShowActions(false); }}
+                >
+                  <Clock className="w-3.5 h-3.5" />
                   Add to Queue
                 </button>
               )}
@@ -828,6 +839,7 @@ export function FileManagerPage() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [linkFolder, setLinkFolder] = useState<LibraryFolderTree | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'file' | 'folder' | 'bulk'; id: number; count?: number } | null>(null);
+  const [printFile, setPrintFile] = useState<LibraryFileListItem | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
     return (localStorage.getItem('library-view-mode') as 'grid' | 'list') || 'grid';
   });
@@ -1416,6 +1428,7 @@ export function FileManagerPage() {
                     onDelete={(id) => setDeleteConfirm({ type: 'file', id })}
                     onDownload={handleDownload}
                     onAddToQueue={(id) => addToQueueMutation.mutate([id])}
+                    onPrint={setPrintFile}
                   />
                 ))}
               </div>
@@ -1506,14 +1519,23 @@ export function FileManagerPage() {
                     {/* Actions */}
                     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       {isSlicedFilename(file.filename) && (
-                        <button
-                          onClick={() => addToQueueMutation.mutate([file.id])}
-                          className="p-1.5 rounded hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green transition-colors"
-                          title="Add to Queue"
-                          disabled={addToQueueMutation.isPending}
-                        >
-                          <Printer className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => setPrintFile(file)}
+                            className="p-1.5 rounded hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green transition-colors"
+                            title="Print"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => addToQueueMutation.mutate([file.id])}
+                            className="p-1.5 rounded hover:bg-bambu-dark text-bambu-gray hover:text-white transition-colors"
+                            title="Add to Queue"
+                            disabled={addToQueueMutation.isPending}
+                          >
+                            <Clock className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                       <button
                         onClick={() => handleDownload(file.id)}
@@ -1596,6 +1618,20 @@ export function FileManagerPage() {
           variant="danger"
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+
+      {printFile && (
+        <PrintModal
+          mode="reprint"
+          libraryFileId={printFile.id}
+          archiveName={printFile.print_name || printFile.filename}
+          onClose={() => setPrintFile(null)}
+          onSuccess={() => {
+            setPrintFile(null);
+            queryClient.invalidateQueries({ queryKey: ['library-files'] });
+            queryClient.invalidateQueries({ queryKey: ['archives'] });
+          }}
         />
       )}
     </div>

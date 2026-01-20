@@ -78,6 +78,14 @@
 - Auto power-on before print
 - Auto power-off after cooldown
 
+### 📁 File Manager (Library)
+- Upload and organize sliced files (3MF, gcode)
+- Folder structure with drag-and-drop
+- Print directly to any printer with full options
+- Add to queue without creating archive upfront
+- Plate selection for multi-plate 3MF files
+- Duplicate detection via file hash
+
 ### 📁 Projects
 - Group related prints (e.g., "Voron Build")
 - Track plates (print jobs) and parts separately

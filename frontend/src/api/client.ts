@@ -845,7 +845,9 @@ export interface DiscoveredTasmotaDevice {
 export interface PrintQueueItem {
   id: number;
   printer_id: number | null;  // null = unassigned
-  archive_id: number;
+  // Either archive_id OR library_file_id must be set (archive created at print start)
+  archive_id: number | null;
+  library_file_id: number | null;
   position: number;
   scheduled_time: string | null;
   require_previous_success: boolean;
@@ -867,13 +869,17 @@ export interface PrintQueueItem {
   created_at: string;
   archive_name?: string | null;
   archive_thumbnail?: string | null;
+  library_file_name?: string | null;
+  library_file_thumbnail?: string | null;
   printer_name?: string | null;
-  print_time_seconds?: number | null;  // Estimated print time from archive
+  print_time_seconds?: number | null;  // Estimated print time from archive or library file
 }
 
 export interface PrintQueueItemCreate {
   printer_id?: number | null;  // null = unassigned
-  archive_id: number;
+  // Either archive_id OR library_file_id must be provided
+  archive_id?: number | null;
+  library_file_id?: number | null;
   scheduled_time?: string | null;
   require_previous_success?: boolean;
   auto_off_after?: boolean;
@@ -2594,6 +2600,61 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ file_ids: fileIds }),
     }),
+  printLibraryFile: (
+    fileId: number,
+    printerId: number,
+    options?: {
+      plate_id?: number;
+      ams_mapping?: number[];
+      bed_levelling?: boolean;
+      flow_cali?: boolean;
+      vibration_cali?: boolean;
+      layer_inspect?: boolean;
+      timelapse?: boolean;
+      use_ams?: boolean;
+    }
+  ) =>
+    request<{ status: string; printer_id: number; archive_id: number; filename: string }>(
+      `/library/files/${fileId}/print?printer_id=${printerId}`,
+      {
+        method: 'POST',
+        body: options ? JSON.stringify(options) : undefined,
+      }
+    ),
+  getLibraryFilePlates: (fileId: number) =>
+    request<{
+      file_id: number;
+      filename: string;
+      plates: Array<{
+        index: number;
+        name: string | null;
+        objects: string[];
+        has_thumbnail: boolean;
+        thumbnail_url: string | null;
+        print_time_seconds: number | null;
+        filament_used_grams: number | null;
+        filaments: Array<{
+          slot_id: number;
+          type: string;
+          color: string;
+          used_grams: number;
+          used_meters: number;
+        }>;
+      }>;
+      is_multi_plate: boolean;
+    }>(`/library/files/${fileId}/plates`),
+  getLibraryFileFilamentRequirements: (fileId: number, plateId?: number) =>
+    request<{
+      file_id: number;
+      filename: string;
+      filaments: Array<{
+        slot_id: number;
+        type: string;
+        color: string;
+        used_grams: number;
+        used_meters: number;
+      }>;
+    }>(`/library/files/${fileId}/filament-requirements${plateId !== undefined ? `?plate_id=${plateId}` : ''}`),
 };
 
 // AMS History types

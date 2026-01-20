@@ -23,13 +23,17 @@ import { DEFAULT_PRINT_OPTIONS, DEFAULT_SCHEDULE_OPTIONS } from './types';
 
 /**
  * Unified PrintModal component that handles three modes:
- * - 'reprint': Immediate print from archive (supports multi-printer)
- * - 'add-to-queue': Schedule print to queue (supports multi-printer)
- * - 'edit-queue-item': Edit existing queue item (single printer only)
+ * - 'reprint': Immediate print from archive or library file (supports multi-printer)
+ * - 'add-to-queue': Schedule print to queue from archive or library file (supports multi-printer)
+ * - 'edit-queue-item': Edit existing queue item (supports multi-printer)
+ *
+ * Both archiveId and libraryFileId are supported. Library files can be printed immediately
+ * or added to queue (archive is created at print start time, not when queued).
  */
 export function PrintModal({
   mode,
   archiveId,
+  libraryFileId,
   archiveName,
   queueItem,
   onClose,
@@ -38,16 +42,17 @@ export function PrintModal({
   const queryClient = useQueryClient();
   const { showToast } = useToast();
 
-  // Single printer selection (for edit mode and backward compatibility)
-  const [selectedPrinter, setSelectedPrinter] = useState<number | null>(() => {
-    if (mode === 'edit-queue-item' && queueItem) {
-      return queueItem.printer_id;
-    }
-    return null;
-  });
+  // Determine if we're printing a library file
+  const isLibraryFile = !!libraryFileId && !archiveId;
 
-  // Multiple printer selection (for reprint and add-to-queue modes)
-  const [selectedPrinters, setSelectedPrinters] = useState<number[]>([]);
+  // Multiple printer selection (used for all modes now)
+  const [selectedPrinters, setSelectedPrinters] = useState<number[]>(() => {
+    // Initialize with the queue item's printer if editing
+    if (mode === 'edit-queue-item' && queueItem?.printer_id) {
+      return [queueItem.printer_id];
+    }
+    return [];
+  });
 
   const [selectedPlate, setSelectedPlate] = useState<number | null>(() => {
     if (mode === 'edit-queue-item' && queueItem) {
@@ -109,20 +114,17 @@ export function PrintModal({
   });
 
   // Track initial values for clearing mappings on change (edit mode only)
-  const [initialPrinterId] = useState(() => (mode === 'edit-queue-item' && queueItem ? queueItem.printer_id : null));
+  const [initialPrinterIds] = useState(() => (mode === 'edit-queue-item' && queueItem?.printer_id ? [queueItem.printer_id] : []));
   const [initialPlateId] = useState(() => (mode === 'edit-queue-item' && queueItem ? queueItem.plate_id : null));
 
   // Submission state for multi-printer
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitProgress, setSubmitProgress] = useState({ current: 0, total: 0 });
 
-  // Determine if we're in multi-printer mode
-  const isMultiPrinterMode = mode !== 'edit-queue-item';
-  const effectivePrinterCount = isMultiPrinterMode ? selectedPrinters.length : (selectedPrinter ? 1 : 0);
+  // Printer counts and effective printer for filament mapping
+  const effectivePrinterCount = selectedPrinters.length;
   // For filament mapping, use first selected printer (mapping applies to all)
-  const effectivePrinterId = isMultiPrinterMode
-    ? (selectedPrinters.length > 0 ? selectedPrinters[0] : null)
-    : selectedPrinter;
+  const effectivePrinterId = selectedPrinters.length > 0 ? selectedPrinters[0] : null;
 
   // Queries
   const { data: printers, isLoading: loadingPrinters } = useQuery({
@@ -130,16 +132,44 @@ export function PrintModal({
     queryFn: api.getPrinters,
   });
 
-  const { data: platesData } = useQuery({
+  // Fetch plates for archives
+  const { data: archivePlatesData, isError: archivePlatesError } = useQuery({
     queryKey: ['archive-plates', archiveId],
-    queryFn: () => api.getArchivePlates(archiveId),
+    queryFn: () => api.getArchivePlates(archiveId!),
+    enabled: !!archiveId && !isLibraryFile,
+    retry: false,
   });
 
-  const { data: filamentReqs } = useQuery({
-    queryKey: ['archive-filaments', archiveId, selectedPlate],
-    queryFn: () => api.getArchiveFilamentRequirements(archiveId, selectedPlate ?? undefined),
-    enabled: selectedPlate !== null || !platesData?.is_multi_plate,
+  // Fetch plates for library files
+  const { data: libraryPlatesData } = useQuery({
+    queryKey: ['library-file-plates', libraryFileId],
+    queryFn: () => api.getLibraryFilePlates(libraryFileId!),
+    enabled: isLibraryFile && !!libraryFileId,
   });
+
+  // Combine plates data from either source
+  const platesData = isLibraryFile ? libraryPlatesData : archivePlatesData;
+
+  // Fetch filament requirements for archives
+  const { data: archiveFilamentReqs, isError: archiveFilamentReqsError } = useQuery({
+    queryKey: ['archive-filaments', archiveId, selectedPlate],
+    queryFn: () => api.getArchiveFilamentRequirements(archiveId!, selectedPlate ?? undefined),
+    enabled: !!archiveId && !isLibraryFile && (selectedPlate !== null || !platesData?.is_multi_plate),
+    retry: false,
+  });
+
+  // Fetch filament requirements for library files (with plate support)
+  const { data: libraryFilamentReqs } = useQuery({
+    queryKey: ['library-file-filaments', libraryFileId, selectedPlate],
+    queryFn: () => api.getLibraryFileFilamentRequirements(libraryFileId!, selectedPlate ?? undefined),
+    enabled: isLibraryFile && !!libraryFileId && (selectedPlate !== null || !platesData?.is_multi_plate),
+  });
+
+  // Track if archive data couldn't be loaded (archive deleted or file missing)
+  const archiveDataMissing = !isLibraryFile && (archivePlatesError || archiveFilamentReqsError);
+
+  // Combine filament requirements from either source
+  const effectiveFilamentReqs = isLibraryFile ? libraryFilamentReqs : archiveFilamentReqs;
 
   // Only fetch printer status when single printer selected (for filament mapping)
   const { data: printerStatus } = useQuery({
@@ -149,7 +179,7 @@ export function PrintModal({
   });
 
   // Get AMS mapping from hook (only when single printer selected)
-  const { amsMapping } = useFilamentMapping(filamentReqs, printerStatus, manualMappings);
+  const { amsMapping } = useFilamentMapping(effectiveFilamentReqs, printerStatus, manualMappings);
 
   // Auto-select first plate for single-plate files
   useEffect(() => {
@@ -158,8 +188,9 @@ export function PrintModal({
     }
   }, [platesData, selectedPlate]);
 
-  // Auto-select first printer when only one available (non-multi mode)
+  // Auto-select first printer when only one available
   useEffect(() => {
+    // Skip auto-select for edit mode (already initialized from queueItem)
     if (mode === 'edit-queue-item') return;
     const activePrinters = printers?.filter(p => p.is_active) || [];
     if (activePrinters.length === 1 && selectedPrinters.length === 0) {
@@ -170,13 +201,15 @@ export function PrintModal({
   // Clear manual mappings when printer or plate changes
   useEffect(() => {
     if (mode === 'edit-queue-item') {
-      if (selectedPrinter !== initialPrinterId || selectedPlate !== initialPlateId) {
+      // For edit mode, clear mappings if printer selection or plate changed from initial
+      const printersChanged = JSON.stringify(selectedPrinters.sort()) !== JSON.stringify(initialPrinterIds.sort());
+      if (printersChanged || selectedPlate !== initialPlateId) {
         setManualMappings({});
       }
     } else {
       setManualMappings({});
     }
-  }, [mode, selectedPrinter, selectedPrinters, selectedPlate, initialPrinterId, initialPlateId]);
+  }, [mode, selectedPrinters, selectedPlate, initialPrinterIds, initialPlateId]);
 
   // Close on Escape key
   useEffect(() => {
@@ -212,29 +245,7 @@ export function PrintModal({
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
 
-    if (mode === 'edit-queue-item') {
-      // Edit mode - single printer update
-      const data: PrintQueueItemUpdate = {
-        printer_id: selectedPrinter,
-        require_previous_success: scheduleOptions.requirePreviousSuccess,
-        auto_off_after: scheduleOptions.autoOffAfter,
-        manual_start: scheduleOptions.scheduleType === 'manual',
-        ams_mapping: amsMapping,
-        plate_id: selectedPlate,
-        ...printOptions,
-      };
-
-      if (scheduleOptions.scheduleType === 'scheduled' && scheduleOptions.scheduledTime) {
-        data.scheduled_time = new Date(scheduleOptions.scheduledTime).toISOString();
-      } else {
-        data.scheduled_time = null;
-      }
-
-      updateQueueMutation.mutate(data);
-      return;
-    }
-
-    // Multi-printer modes (reprint or add-to-queue)
+    // Validate printer selection
     if (selectedPrinters.length === 0) {
       showToast('Please select at least one printer', 'error');
       return;
@@ -249,37 +260,60 @@ export function PrintModal({
       errors: [],
     };
 
+    // Common queue data for add-to-queue and edit modes
+    const getQueueData = (printerId: number): PrintQueueItemCreate => ({
+      printer_id: printerId,
+      // Use library_file_id for library files, archive_id for archives
+      archive_id: isLibraryFile ? undefined : archiveId,
+      library_file_id: isLibraryFile ? libraryFileId : undefined,
+      require_previous_success: scheduleOptions.requirePreviousSuccess,
+      auto_off_after: scheduleOptions.autoOffAfter,
+      manual_start: scheduleOptions.scheduleType === 'manual',
+      ams_mapping: amsMapping,
+      plate_id: selectedPlate,
+      scheduled_time: scheduleOptions.scheduleType === 'scheduled' && scheduleOptions.scheduledTime
+        ? new Date(scheduleOptions.scheduledTime).toISOString()
+        : undefined,
+      ...printOptions,
+    });
+
     for (let i = 0; i < selectedPrinters.length; i++) {
       const printerId = selectedPrinters[i];
       setSubmitProgress({ current: i + 1, total: selectedPrinters.length });
 
       try {
-        // Use the same AMS mapping for all printers (configured via UI based on first printer)
-        // This assumes all printers have the same filament configuration
         if (mode === 'reprint') {
-          await api.reprintArchive(archiveId, printerId, {
-            plate_id: selectedPlate ?? undefined,
-            ams_mapping: amsMapping,
-            ...printOptions,
-          });
-        } else {
-          // add-to-queue mode
-          const data: PrintQueueItemCreate = {
+          // Reprint mode - start print immediately
+          if (isLibraryFile) {
+            await api.printLibraryFile(libraryFileId!, printerId, {
+              ams_mapping: amsMapping,
+              ...printOptions,
+            });
+          } else {
+            await api.reprintArchive(archiveId!, printerId, {
+              plate_id: selectedPlate ?? undefined,
+              ams_mapping: amsMapping,
+              ...printOptions,
+            });
+          }
+        } else if (mode === 'edit-queue-item' && i === 0) {
+          // Edit mode - update the original queue item for the first printer
+          const updateData: PrintQueueItemUpdate = {
             printer_id: printerId,
-            archive_id: archiveId,
             require_previous_success: scheduleOptions.requirePreviousSuccess,
             auto_off_after: scheduleOptions.autoOffAfter,
             manual_start: scheduleOptions.scheduleType === 'manual',
             ams_mapping: amsMapping,
             plate_id: selectedPlate,
+            scheduled_time: scheduleOptions.scheduleType === 'scheduled' && scheduleOptions.scheduledTime
+              ? new Date(scheduleOptions.scheduledTime).toISOString()
+              : null,
             ...printOptions,
           };
-
-          if (scheduleOptions.scheduleType === 'scheduled' && scheduleOptions.scheduledTime) {
-            data.scheduled_time = new Date(scheduleOptions.scheduledTime).toISOString();
-          }
-
-          await addToQueueMutation.mutateAsync(data);
+          await updateQueueMutation.mutateAsync(updateData);
+        } else {
+          // Add-to-queue mode OR edit mode with additional printers
+          await addToQueueMutation.mutateAsync(getQueueData(printerId));
         }
         results.success++;
       } catch (error) {
@@ -293,9 +327,9 @@ export function PrintModal({
 
     // Show result toast
     if (results.failed === 0) {
-      const action = mode === 'reprint' ? 'sent to' : 'queued for';
+      const action = mode === 'reprint' ? 'sent to' : (mode === 'edit-queue-item' ? 'updated/queued for' : 'queued for');
       if (results.success === 1) {
-        showToast(`Print ${action} printer`);
+        showToast(mode === 'edit-queue-item' ? 'Queue item updated' : `Print ${action} printer`);
       } else {
         showToast(`Print ${action} ${results.success} printers`);
       }
@@ -315,27 +349,22 @@ export function PrintModal({
   const canSubmit = useMemo(() => {
     if (isPending) return false;
 
-    // For edit mode, printer can be null (unassigned)
-    if (mode === 'edit-queue-item') {
-      return (printers?.length ?? 0) > 0;
-    }
-
-    // For reprint and add-to-queue, need at least one selected printer
+    // Need at least one selected printer
     if (selectedPrinters.length === 0) return false;
 
-    // For multi-plate files, need a selected plate
-    if (isMultiPlate && !selectedPlate) return false;
+    // For multi-plate archive files, need a selected plate (library files skip this)
+    if (!isLibraryFile && isMultiPlate && !selectedPlate) return false;
 
     return true;
-  }, [mode, selectedPrinters.length, isMultiPlate, selectedPlate, isPending, printers]);
+  }, [selectedPrinters.length, isMultiPlate, selectedPlate, isPending, isLibraryFile]);
 
   // Modal title and action button text based on mode
   const getModalConfig = () => {
-    const printerCount = isMultiPrinterMode ? selectedPrinters.length : 1;
+    const printerCount = selectedPrinters.length;
 
     if (mode === 'reprint') {
       return {
-        title: 'Re-print',
+        title: isLibraryFile ? 'Print' : 'Re-print',
         icon: Printer,
         submitText: printerCount > 1 ? `Print to ${printerCount} Printers` : 'Print',
         submitIcon: Printer,
@@ -355,12 +384,15 @@ export function PrintModal({
           : 'Adding...',
       };
     }
+    // edit-queue-item mode
     return {
       title: 'Edit Queue Item',
       icon: Pencil,
-      submitText: 'Save Changes',
+      submitText: 'Save',
       submitIcon: Pencil,
-      loadingText: 'Saving...',
+      loadingText: submitProgress.total > 1
+        ? `Saving ${submitProgress.current}/${submitProgress.total}...`
+        : 'Saving...',
     };
   };
 
@@ -368,8 +400,13 @@ export function PrintModal({
   const TitleIcon = modalConfig.icon;
   const SubmitIcon = modalConfig.submitIcon;
 
-  // Show filament mapping only when single printer selected
-  const showFilamentMapping = effectivePrinterId && (isMultiPlate ? selectedPlate !== null : true);
+  // Show filament mapping when:
+  // - Single printer selected
+  // - For archives: plate is selected (for multi-plate) or not required (single-plate)
+  // - For library files: always show (no plate selection)
+  const showFilamentMapping = effectivePrinterId && (
+    isLibraryFile || (isMultiPlate ? selectedPlate !== null : true)
+  );
 
   return (
     <div
@@ -401,8 +438,7 @@ export function PrintModal({
             <p className={`text-sm text-bambu-gray ${mode === 'reprint' ? 'mb-4' : ''}`}>
               {mode === 'reprint' ? (
                 <>
-                  Send <span className="text-white">{archiveName}</span> to{' '}
-                  {isMultiPrinterMode ? 'printer(s)' : 'a printer'}
+                  Send <span className="text-white">{archiveName}</span> to printer(s)
                 </>
               ) : (
                 <>
@@ -415,17 +451,15 @@ export function PrintModal({
             {/* Printer selection */}
             <PrinterSelector
               printers={printers || []}
-              selectedPrinterId={selectedPrinter}
               selectedPrinterIds={selectedPrinters}
-              onSelect={setSelectedPrinter}
               onMultiSelect={setSelectedPrinters}
               isLoading={loadingPrinters}
-              allowUnassigned={mode === 'edit-queue-item'}
-              allowMultiple={isMultiPrinterMode}
+              allowMultiple={true}
+              showInactive={mode === 'edit-queue-item'}
             />
 
             {/* Multi-printer filament mapping note */}
-            {isMultiPrinterMode && selectedPrinters.length > 1 && (
+            {selectedPrinters.length > 1 && (
               <div className="flex items-start gap-2 p-3 mb-2 bg-blue-500/10 border border-blue-500/30 rounded-lg text-sm">
                 <AlertCircle className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
                 <p className="text-blue-400">
@@ -442,13 +476,21 @@ export function PrintModal({
               onSelect={setSelectedPlate}
             />
 
-            {/* Filament mapping - show when single printer selected and plate ready */}
-            {showFilamentMapping && (
+            {/* Warning when archive data couldn't be loaded */}
+            {archiveDataMissing && (
+              <div className="flex items-start gap-2 p-3 mb-2 bg-orange-500/10 border border-orange-500/30 rounded-lg text-sm">
+                <AlertCircle className="w-4 h-4 text-orange-400 mt-0.5 flex-shrink-0" />
+                <p className="text-orange-400">
+                  Archive data unavailable. The source file may have been deleted. Filament mapping is disabled.
+                </p>
+              </div>
+            )}
+
+            {/* Filament mapping - show when printer selected and filament requirements available */}
+            {showFilamentMapping && !archiveDataMissing && (
               <FilamentMapping
                 printerId={effectivePrinterId!}
-                archiveId={archiveId}
-                selectedPlate={selectedPlate}
-                isMultiPlate={isMultiPlate}
+                filamentReqs={effectiveFilamentReqs}
                 manualMappings={manualMappings}
                 onManualMappingChange={setManualMappings}
               />

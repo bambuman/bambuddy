@@ -2,7 +2,7 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
-## [0.1.6b11] - 2026-01-20
+## [Unreleased]
 
 ### New Features
 - **Unified Print Modal** - Consolidated three separate modals into one unified component:
@@ -18,11 +18,25 @@ All notable changes to Bambuddy will be documented in this file.
 - **Enhanced Add-to-Queue** - Now includes plate selection and print options:
   - Configure all print settings upfront instead of editing afterward
   - Filament mapping with manual override capability
+- **Print from File Manager** - Full print configuration when printing from library files:
+  - Plate selection for multi-plate 3MF files with thumbnails
+  - Filament slot mapping with comparison to loaded filaments
+  - All print options (bed levelling, flow calibration, etc.)
+- **Deferred archive creation** - Queue items from File Manager no longer create archives upfront:
+  - Queue items store `library_file_id` directly
+  - Archives are created automatically when prints start
+  - Reduces clutter in Archives from unprinted queued files
+  - Queue displays library file name, thumbnail, and print time
+
+### Changed
+- **Edit Queue Item modal** - Single printer selection only (reassigns item, doesn't duplicate)
+- **Edit Queue Item button** - Changed from "Print to X Printers" to "Save"
 
 ### Fixed
 - **File Manager folder navigation** - Fixed bug where opening a folder would briefly show files then jump back to root:
   - Removed `selectedFolderId` from useEffect dependency array that was causing a reset loop
   - Folder navigation now works correctly without resetting
+- **Queue items with library files** - Fixed 500 errors when listing/updating queue items from File Manager
 
 ## [0.1.6b10] - 2026-01-20
 

@@ -579,6 +579,68 @@ async def run_migrations(conn):
     except Exception:
         pass
 
+    # Migration: Add library_file_id column to print_queue and make archive_id nullable
+    # This allows queue items to reference library files directly (archive created at print start)
+    try:
+        await conn.execute(
+            text(
+                "ALTER TABLE print_queue ADD COLUMN library_file_id INTEGER REFERENCES library_files(id) ON DELETE CASCADE"
+            )
+        )
+    except Exception:
+        pass
+
+    # Check if archive_id needs to be made nullable (requires table recreation in SQLite)
+    try:
+        result = await conn.execute(text("SELECT sql FROM sqlite_master WHERE type='table' AND name='print_queue'"))
+        row = result.fetchone()
+        if row and "archive_id INTEGER NOT NULL" in (row[0] or ""):
+            # Need to migrate - archive_id is currently NOT NULL
+            await conn.execute(
+                text("""
+                CREATE TABLE print_queue_new2 (
+                    id INTEGER PRIMARY KEY,
+                    printer_id INTEGER REFERENCES printers(id) ON DELETE CASCADE,
+                    archive_id INTEGER REFERENCES print_archives(id) ON DELETE CASCADE,
+                    library_file_id INTEGER REFERENCES library_files(id) ON DELETE CASCADE,
+                    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                    position INTEGER DEFAULT 0,
+                    scheduled_time DATETIME,
+                    manual_start BOOLEAN DEFAULT 0,
+                    require_previous_success BOOLEAN DEFAULT 0,
+                    auto_off_after BOOLEAN DEFAULT 0,
+                    ams_mapping TEXT,
+                    plate_id INTEGER,
+                    bed_levelling BOOLEAN DEFAULT 1,
+                    flow_cali BOOLEAN DEFAULT 0,
+                    vibration_cali BOOLEAN DEFAULT 1,
+                    layer_inspect BOOLEAN DEFAULT 0,
+                    timelapse BOOLEAN DEFAULT 0,
+                    use_ams BOOLEAN DEFAULT 1,
+                    status VARCHAR(20) DEFAULT 'pending',
+                    started_at DATETIME,
+                    completed_at DATETIME,
+                    error_message TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            )
+            await conn.execute(
+                text("""
+                INSERT INTO print_queue_new2
+                SELECT id, printer_id, archive_id, NULL, project_id, position, scheduled_time,
+                       manual_start, require_previous_success, auto_off_after, ams_mapping, plate_id,
+                       COALESCE(bed_levelling, 1), COALESCE(flow_cali, 0), COALESCE(vibration_cali, 1),
+                       COALESCE(layer_inspect, 0), COALESCE(timelapse, 0), COALESCE(use_ams, 1),
+                       status, started_at, completed_at, error_message, created_at
+                FROM print_queue
+            """)
+            )
+            await conn.execute(text("DROP TABLE print_queue"))
+            await conn.execute(text("ALTER TABLE print_queue_new2 RENAME TO print_queue"))
+    except Exception:
+        pass
+
 
 async def seed_notification_templates():
     """Seed default notification templates if they don't exist."""

@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.core.database import get_db
 from backend.app.models.archive import PrintArchive
+from backend.app.models.library import LibraryFile
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.schemas.print_queue import (
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/queue", tags=["queue"])
 
 
 def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
-    """Add nested archive/printer info to response."""
+    """Add nested archive/printer/library_file info to response."""
     # Parse ams_mapping from JSON string BEFORE model_validate
     ams_mapping_parsed = None
     if item.ams_mapping:
@@ -40,6 +41,7 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         "id": item.id,
         "printer_id": item.printer_id,
         "archive_id": item.archive_id,
+        "library_file_id": item.library_file_id,
         "position": item.position,
         "scheduled_time": item.scheduled_time,
         "require_previous_success": item.require_previous_success,
@@ -64,6 +66,16 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         response.archive_name = item.archive.print_name or item.archive.filename
         response.archive_thumbnail = item.archive.thumbnail_path
         response.print_time_seconds = item.archive.print_time_seconds
+    if item.library_file:
+        response.library_file_name = (
+            item.library_file.file_metadata.get("print_name") if item.library_file.file_metadata else None
+        )
+        if not response.library_file_name:
+            response.library_file_name = item.library_file.filename
+        response.library_file_thumbnail = item.library_file.thumbnail_path
+        # Get print time from library file metadata if no archive
+        if not item.archive and item.library_file.file_metadata:
+            response.print_time_seconds = item.library_file.file_metadata.get("print_time_seconds")
     if item.printer:
         response.printer_name = item.printer.name
     return response
@@ -78,7 +90,11 @@ async def list_queue(
     """List all queue items, optionally filtered by printer or status."""
     query = (
         select(PrintQueueItem)
-        .options(selectinload(PrintQueueItem.archive), selectinload(PrintQueueItem.printer))
+        .options(
+            selectinload(PrintQueueItem.archive),
+            selectinload(PrintQueueItem.printer),
+            selectinload(PrintQueueItem.library_file),
+        )
         .order_by(PrintQueueItem.printer_id.nulls_first(), PrintQueueItem.position)
     )
 
@@ -102,16 +118,27 @@ async def add_to_queue(
     db: AsyncSession = Depends(get_db),
 ):
     """Add an item to the print queue."""
+    # Validate that either archive_id or library_file_id is provided
+    if not data.archive_id and not data.library_file_id:
+        raise HTTPException(400, "Either archive_id or library_file_id must be provided")
+
     # Validate printer exists (if assigned)
     if data.printer_id is not None:
         result = await db.execute(select(Printer).where(Printer.id == data.printer_id))
         if not result.scalar_one_or_none():
             raise HTTPException(400, "Printer not found")
 
-    # Validate archive exists
-    result = await db.execute(select(PrintArchive).where(PrintArchive.id == data.archive_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(400, "Archive not found")
+    # Validate archive exists (if provided)
+    if data.archive_id:
+        result = await db.execute(select(PrintArchive).where(PrintArchive.id == data.archive_id))
+        if not result.scalar_one_or_none():
+            raise HTTPException(400, "Archive not found")
+
+    # Validate library file exists (if provided)
+    if data.library_file_id:
+        result = await db.execute(select(LibraryFile).where(LibraryFile.id == data.library_file_id))
+        if not result.scalar_one_or_none():
+            raise HTTPException(400, "Library file not found")
 
     # Get next position for this printer (or for unassigned items)
     if data.printer_id is not None:
@@ -132,6 +159,7 @@ async def add_to_queue(
     item = PrintQueueItem(
         printer_id=data.printer_id,
         archive_id=data.archive_id,
+        library_file_id=data.library_file_id,
         scheduled_time=data.scheduled_time,
         require_previous_success=data.require_previous_success,
         auto_off_after=data.auto_off_after,
@@ -152,9 +180,10 @@ async def add_to_queue(
     await db.refresh(item)
 
     # Load relationships for response
-    await db.refresh(item, ["archive", "printer"])
+    await db.refresh(item, ["archive", "printer", "library_file"])
 
-    logger.info(f"Added archive {data.archive_id} to queue for printer {data.printer_id or 'unassigned'}")
+    source_name = f"archive {data.archive_id}" if data.archive_id else f"library file {data.library_file_id}"
+    logger.info(f"Added {source_name} to queue for printer {data.printer_id or 'unassigned'}")
 
     # MQTT relay - publish queue job added
     try:
@@ -177,7 +206,11 @@ async def get_queue_item(item_id: int, db: AsyncSession = Depends(get_db)):
     """Get a specific queue item."""
     result = await db.execute(
         select(PrintQueueItem)
-        .options(selectinload(PrintQueueItem.archive), selectinload(PrintQueueItem.printer))
+        .options(
+            selectinload(PrintQueueItem.archive),
+            selectinload(PrintQueueItem.printer),
+            selectinload(PrintQueueItem.library_file),
+        )
         .where(PrintQueueItem.id == item_id)
     )
     item = result.scalar_one_or_none()
@@ -217,7 +250,7 @@ async def update_queue_item(
         setattr(item, field, value)
 
     await db.commit()
-    await db.refresh(item, ["archive", "printer"])
+    await db.refresh(item, ["archive", "printer", "library_file"])
 
     logger.info(f"Updated queue item {item_id}")
     return _enrich_response(item)
@@ -372,7 +405,7 @@ async def start_queue_item(
     # Clear manual_start flag so scheduler picks it up
     item.manual_start = False
     await db.commit()
-    await db.refresh(item, ["archive", "printer"])
+    await db.refresh(item, ["archive", "printer", "library_file"])
 
     logger.info(f"Manually started queue item {item_id} (cleared manual_start flag)")
     return _enrich_response(item)

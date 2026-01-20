@@ -12,22 +12,13 @@ import type { FilamentMappingProps } from './types';
  */
 export function FilamentMapping({
   printerId,
-  archiveId,
-  selectedPlate,
-  isMultiPlate,
+  filamentReqs,
   manualMappings,
   onManualMappingChange,
 }: FilamentMappingProps) {
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-
-  // Fetch filament requirements from the archived 3MF (filtered by plate if selected)
-  const { data: filamentReqs } = useQuery({
-    queryKey: ['archive-filaments', archiveId, selectedPlate],
-    queryFn: () => api.getArchiveFilamentRequirements(archiveId, selectedPlate ?? undefined),
-    enabled: selectedPlate !== null || !isMultiPlate,
-  });
 
   // Fetch printer status
   const { data: printerStatus } = useQuery({

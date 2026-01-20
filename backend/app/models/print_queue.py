@@ -15,7 +15,11 @@ class PrintQueueItem(Base):
 
     # Links
     printer_id: Mapped[int | None] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), nullable=True)
-    archive_id: Mapped[int] = mapped_column(ForeignKey("print_archives.id", ondelete="CASCADE"))
+    # Either archive_id OR library_file_id must be set (archive created at print start from library file)
+    archive_id: Mapped[int | None] = mapped_column(ForeignKey("print_archives.id", ondelete="CASCADE"), nullable=True)
+    library_file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("library_files.id", ondelete="CASCADE"), nullable=True
+    )
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
 
     # Scheduling
@@ -57,10 +61,12 @@ class PrintQueueItem(Base):
 
     # Relationships
     printer: Mapped["Printer"] = relationship()
-    archive: Mapped["PrintArchive"] = relationship()
+    archive: Mapped["PrintArchive | None"] = relationship()
+    library_file: Mapped["LibraryFile | None"] = relationship()
     project: Mapped["Project | None"] = relationship(back_populates="queue_items")
 
 
 from backend.app.models.archive import PrintArchive  # noqa: E402
+from backend.app.models.library import LibraryFile  # noqa: E402
 from backend.app.models.printer import Printer  # noqa: E402
 from backend.app.models.project import Project  # noqa: E402

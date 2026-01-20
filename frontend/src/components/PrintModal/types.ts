@@ -10,13 +10,19 @@ export type PrintModalMode = 'reprint' | 'add-to-queue' | 'edit-queue-item';
 
 /**
  * Props for the unified PrintModal component.
+ *
+ * Either archiveId or libraryFileId must be provided.
+ * - archiveId: For reprinting/queueing archives
+ * - libraryFileId: For printing library files directly
  */
 export interface PrintModalProps {
   /** Modal operation mode */
   mode: PrintModalMode;
-  /** Archive ID to print */
-  archiveId: number;
-  /** Archive display name */
+  /** Archive ID to print (mutually exclusive with libraryFileId) */
+  archiveId?: number;
+  /** Library file ID to print (mutually exclusive with archiveId) */
+  libraryFileId?: number;
+  /** Display name for the print */
   archiveName: string;
   /** Existing queue item (only for edit-queue-item mode) */
   queueItem?: PrintQueueItem;
@@ -103,13 +109,12 @@ export interface PlatesResponse {
  */
 export interface PrinterSelectorProps {
   printers: Printer[];
-  selectedPrinterId: number | null;
-  selectedPrinterIds?: number[];
-  onSelect: (printerId: number | null) => void;
-  onMultiSelect?: (printerIds: number[]) => void;
+  selectedPrinterIds: number[];
+  onMultiSelect: (printerIds: number[]) => void;
   isLoading?: boolean;
-  allowUnassigned?: boolean;
   allowMultiple?: boolean;
+  /** Show inactive printers (for edit mode where original assignment may be inactive) */
+  showInactive?: boolean;
 }
 
 /**
@@ -123,13 +128,25 @@ export interface PlateSelectorProps {
 }
 
 /**
+ * Filament requirement data structure.
+ */
+export interface FilamentReqsData {
+  filaments: Array<{
+    slot_id: number;
+    type: string;
+    color: string;
+    used_grams: number;
+    used_meters: number;
+  }>;
+}
+
+/**
  * Props for the FilamentMapping component.
  */
 export interface FilamentMappingProps {
   printerId: number;
-  archiveId: number;
-  selectedPlate: number | null;
-  isMultiPlate: boolean;
+  /** Pre-fetched filament requirements data */
+  filamentReqs: FilamentReqsData | undefined;
   manualMappings: Record<number, number>;
   onManualMappingChange: (mappings: Record<number, number>) => void;
 }

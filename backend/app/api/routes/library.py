@@ -30,6 +30,7 @@ from backend.app.schemas.library import (
     FileDuplicate,
     FileListResponse,
     FileMoveRequest,
+    FilePrintRequest,
     FileResponse as FileResponseSchema,
     FileUpdate,
     FileUploadResponse,
@@ -755,10 +756,7 @@ async def add_files_to_queue(
     """Add library files to the print queue.
 
     Only sliced files (.gcode or .gcode.3mf) can be added to the queue.
-    For each file:
-    1. Validates it's a sliced file
-    2. Creates an archive from the library file
-    3. Creates a queue item pointing to that archive
+    The archive will be created automatically when the print starts.
     """
     added: list[AddToQueueResult] = []
     errors: list[AddToQueueError] = []
@@ -770,8 +768,6 @@ async def add_files_to_queue(
     # Get max position for queue ordering
     pos_result = await db.execute(select(func.coalesce(func.max(PrintQueueItem.position), 0)))
     max_position = pos_result.scalar() or 0
-
-    archive_service = ArchiveService(db)
 
     for file_id in request.file_ids:
         lib_file = files.get(file_id)
@@ -792,7 +788,7 @@ async def add_files_to_queue(
             continue
 
         try:
-            # Get the full file path
+            # Verify file exists on disk
             file_path = Path(app_settings.base_dir) / lib_file.file_path
 
             if not file_path.exists():
@@ -801,23 +797,11 @@ async def add_files_to_queue(
                 )
                 continue
 
-            # Create archive from the library file
-            archive = await archive_service.archive_print(
-                printer_id=None,  # Unassigned
-                source_file=file_path,
-            )
-
-            if not archive:
-                errors.append(
-                    AddToQueueError(file_id=file_id, filename=lib_file.filename, error="Failed to create archive")
-                )
-                continue
-
-            # Create queue item
+            # Create queue item referencing library file (archive created at print start)
             max_position += 1
             queue_item = PrintQueueItem(
                 printer_id=None,  # Unassigned
-                archive_id=archive.id,
+                library_file_id=file_id,
                 position=max_position,
                 status="pending",
             )
@@ -830,7 +814,6 @@ async def add_files_to_queue(
                     file_id=file_id,
                     filename=lib_file.filename,
                     queue_item_id=queue_item.id,
-                    archive_id=archive.id,
                 )
             )
 
@@ -841,6 +824,509 @@ async def add_files_to_queue(
     await db.commit()
 
     return AddToQueueResponse(added=added, errors=errors)
+
+
+@router.get("/files/{file_id}/plates")
+async def get_library_file_plates(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get available plates from a multi-plate 3MF library file.
+
+    Returns a list of plates with their index, name, thumbnail availability,
+    and filament requirements. For single-plate exports, returns a single plate.
+    """
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    # Get the library file
+    result = await db.execute(select(LibraryFile).where(LibraryFile.id == file_id))
+    lib_file = result.scalar_one_or_none()
+
+    if not lib_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_path = Path(app_settings.base_dir) / lib_file.file_path
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    # Only 3MF files have plates
+    if not lib_file.filename.lower().endswith(".3mf"):
+        return {"file_id": file_id, "filename": lib_file.filename, "plates": [], "is_multi_plate": False}
+
+    plates = []
+
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            namelist = zf.namelist()
+
+            # Find all plate gcode files to determine available plates
+            gcode_files = [n for n in namelist if n.startswith("Metadata/plate_") and n.endswith(".gcode")]
+
+            if not gcode_files:
+                # No sliced plates found
+                return {"file_id": file_id, "filename": lib_file.filename, "plates": [], "is_multi_plate": False}
+
+            # Extract plate indices from gcode filenames
+            plate_indices = []
+            for gf in gcode_files:
+                try:
+                    plate_str = gf[15:-6]  # Remove "Metadata/plate_" and ".gcode"
+                    plate_indices.append(int(plate_str))
+                except ValueError:
+                    pass
+
+            plate_indices.sort()
+
+            # Parse model_settings.config for plate names
+            plate_names = {}
+            if "Metadata/model_settings.config" in namelist:
+                try:
+                    model_content = zf.read("Metadata/model_settings.config").decode()
+                    model_root = ET.fromstring(model_content)
+                    for plate_elem in model_root.findall(".//plate"):
+                        plater_id = None
+                        plater_name = None
+                        for meta in plate_elem.findall("metadata"):
+                            key = meta.get("key")
+                            value = meta.get("value")
+                            if key == "plater_id" and value:
+                                try:
+                                    plater_id = int(value)
+                                except ValueError:
+                                    pass
+                            elif key == "plater_name" and value:
+                                plater_name = value.strip()
+                        if plater_id is not None and plater_name:
+                            plate_names[plater_id] = plater_name
+                except Exception:
+                    pass
+
+            # Parse slice_info.config for plate metadata
+            plate_metadata = {}
+            if "Metadata/slice_info.config" in namelist:
+                content = zf.read("Metadata/slice_info.config").decode()
+                root = ET.fromstring(content)
+
+                for plate_elem in root.findall(".//plate"):
+                    plate_info = {"filaments": [], "prediction": None, "weight": None, "name": None, "objects": []}
+
+                    plate_index = None
+                    for meta in plate_elem.findall("metadata"):
+                        key = meta.get("key")
+                        value = meta.get("value")
+                        if key == "index" and value:
+                            try:
+                                plate_index = int(value)
+                            except ValueError:
+                                pass
+                        elif key == "prediction" and value:
+                            try:
+                                plate_info["prediction"] = int(value)
+                            except ValueError:
+                                pass
+                        elif key == "weight" and value:
+                            try:
+                                plate_info["weight"] = float(value)
+                            except ValueError:
+                                pass
+
+                    # Get filaments used in this plate
+                    for filament_elem in plate_elem.findall("filament"):
+                        filament_id = filament_elem.get("id")
+                        filament_type = filament_elem.get("type", "")
+                        filament_color = filament_elem.get("color", "")
+                        used_g = filament_elem.get("used_g", "0")
+                        used_m = filament_elem.get("used_m", "0")
+
+                        try:
+                            used_grams = float(used_g)
+                        except (ValueError, TypeError):
+                            used_grams = 0
+
+                        if used_grams > 0 and filament_id:
+                            plate_info["filaments"].append(
+                                {
+                                    "slot_id": int(filament_id),
+                                    "type": filament_type,
+                                    "color": filament_color,
+                                    "used_grams": round(used_grams, 1),
+                                    "used_meters": float(used_m) if used_m else 0,
+                                }
+                            )
+
+                    plate_info["filaments"].sort(key=lambda x: x["slot_id"])
+
+                    # Collect object names
+                    for obj_elem in plate_elem.findall("object"):
+                        obj_name = obj_elem.get("name")
+                        if obj_name and obj_name not in plate_info["objects"]:
+                            plate_info["objects"].append(obj_name)
+
+                    # Set plate name
+                    if plate_index is not None:
+                        custom_name = plate_names.get(plate_index)
+                        if custom_name:
+                            plate_info["name"] = custom_name
+                        elif plate_info["objects"]:
+                            plate_info["name"] = plate_info["objects"][0]
+                        plate_metadata[plate_index] = plate_info
+
+            # Build plate list
+            for idx in plate_indices:
+                meta = plate_metadata.get(idx, {})
+                has_thumbnail = f"Metadata/plate_{idx}.png" in namelist
+
+                plates.append(
+                    {
+                        "index": idx,
+                        "name": meta.get("name"),
+                        "objects": meta.get("objects", []),
+                        "has_thumbnail": has_thumbnail,
+                        "thumbnail_url": f"/api/v1/library/files/{file_id}/plate-thumbnail/{idx}"
+                        if has_thumbnail
+                        else None,
+                        "print_time_seconds": meta.get("prediction"),
+                        "filament_used_grams": meta.get("weight"),
+                        "filaments": meta.get("filaments", []),
+                    }
+                )
+
+    except Exception as e:
+        logger.warning(f"Failed to parse plates from library file {file_id}: {e}")
+
+    return {
+        "file_id": file_id,
+        "filename": lib_file.filename,
+        "plates": plates,
+        "is_multi_plate": len(plates) > 1,
+    }
+
+
+@router.get("/files/{file_id}/plate-thumbnail/{plate_index}")
+async def get_library_file_plate_thumbnail(
+    file_id: int,
+    plate_index: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the thumbnail image for a specific plate from a library file."""
+    import zipfile
+
+    from starlette.responses import Response
+
+    result = await db.execute(select(LibraryFile).where(LibraryFile.id == file_id))
+    lib_file = result.scalar_one_or_none()
+
+    if not lib_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_path = Path(app_settings.base_dir) / lib_file.file_path
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            thumb_path = f"Metadata/plate_{plate_index}.png"
+            if thumb_path in zf.namelist():
+                data = zf.read(thumb_path)
+                return Response(content=data, media_type="image/png")
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=404, detail=f"Thumbnail for plate {plate_index} not found")
+
+
+@router.get("/files/{file_id}/filament-requirements")
+async def get_library_file_filament_requirements(
+    file_id: int,
+    plate_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get filament requirements from a library file.
+
+    Parses the 3MF file to extract filament slot IDs, types, colors, and usage.
+    This enables AMS slot assignment when printing from the file manager.
+
+    Args:
+        file_id: The library file ID
+        plate_id: Optional plate index to get filaments for a specific plate
+    """
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    # Get the library file
+    result = await db.execute(select(LibraryFile).where(LibraryFile.id == file_id))
+    lib_file = result.scalar_one_or_none()
+
+    if not lib_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Get the full file path
+    file_path = Path(app_settings.base_dir) / lib_file.file_path
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    # Only 3MF files have parseable filament info
+    if not lib_file.filename.lower().endswith(".3mf"):
+        return {"file_id": file_id, "filename": lib_file.filename, "plate_id": plate_id, "filaments": []}
+
+    filaments = []
+
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            # Parse slice_info.config for filament requirements
+            if "Metadata/slice_info.config" in zf.namelist():
+                content = zf.read("Metadata/slice_info.config").decode()
+                root = ET.fromstring(content)
+
+                if plate_id is not None:
+                    # Find filaments for specific plate
+                    for plate_elem in root.findall(".//plate"):
+                        # Check if this is the requested plate
+                        plate_index = None
+                        for meta in plate_elem.findall("metadata"):
+                            if meta.get("key") == "index":
+                                try:
+                                    plate_index = int(meta.get("value", ""))
+                                except ValueError:
+                                    pass
+                                break
+
+                        if plate_index == plate_id:
+                            # Extract filaments from this plate
+                            for filament_elem in plate_elem.findall("filament"):
+                                filament_id = filament_elem.get("id")
+                                filament_type = filament_elem.get("type", "")
+                                filament_color = filament_elem.get("color", "")
+                                used_g = filament_elem.get("used_g", "0")
+                                used_m = filament_elem.get("used_m", "0")
+
+                                try:
+                                    used_grams = float(used_g)
+                                except (ValueError, TypeError):
+                                    used_grams = 0
+
+                                if used_grams > 0 and filament_id:
+                                    filaments.append(
+                                        {
+                                            "slot_id": int(filament_id),
+                                            "type": filament_type,
+                                            "color": filament_color,
+                                            "used_grams": round(used_grams, 1),
+                                            "used_meters": float(used_m) if used_m else 0,
+                                        }
+                                    )
+                            break
+                else:
+                    # Extract all filaments with used_g > 0 (for single-plate or overview)
+                    for filament_elem in root.findall(".//filament"):
+                        filament_id = filament_elem.get("id")
+                        filament_type = filament_elem.get("type", "")
+                        filament_color = filament_elem.get("color", "")
+                        used_g = filament_elem.get("used_g", "0")
+                        used_m = filament_elem.get("used_m", "0")
+
+                        try:
+                            used_grams = float(used_g)
+                        except (ValueError, TypeError):
+                            used_grams = 0
+
+                        if used_grams > 0 and filament_id:
+                            filaments.append(
+                                {
+                                    "slot_id": int(filament_id),
+                                    "type": filament_type,
+                                    "color": filament_color,
+                                    "used_grams": round(used_grams, 1),
+                                    "used_meters": float(used_m) if used_m else 0,
+                                }
+                            )
+
+            # Sort by slot ID
+            filaments.sort(key=lambda x: x["slot_id"])
+
+    except Exception as e:
+        logger.warning(f"Failed to parse filament requirements from library file {file_id}: {e}")
+
+    return {
+        "file_id": file_id,
+        "filename": lib_file.filename,
+        "plate_id": plate_id,
+        "filaments": filaments,
+    }
+
+
+@router.post("/files/{file_id}/print")
+async def print_library_file(
+    file_id: int,
+    printer_id: int,
+    body: FilePrintRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Print a library file directly.
+
+    This endpoint:
+    1. Creates an archive from the library file
+    2. Uploads the file to the printer
+    3. Starts the print
+
+    Only sliced files (.gcode or .gcode.3mf) can be printed.
+    """
+    import zipfile
+
+    from backend.app.main import register_expected_print
+    from backend.app.models.printer import Printer
+    from backend.app.services.bambu_ftp import (
+        delete_file_async,
+        get_ftp_retry_settings,
+        upload_file_async,
+        with_ftp_retry,
+    )
+    from backend.app.services.printer_manager import printer_manager
+
+    # Use defaults if no body provided
+    if body is None:
+        body = FilePrintRequest()
+
+    # Get the library file
+    result = await db.execute(select(LibraryFile).where(LibraryFile.id == file_id))
+    lib_file = result.scalar_one_or_none()
+
+    if not lib_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Validate file is sliced
+    if not is_sliced_file(lib_file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail="Not a sliced file. Only .gcode or .gcode.3mf files can be printed.",
+        )
+
+    # Get the full file path
+    file_path = Path(app_settings.base_dir) / lib_file.file_path
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    # Get printer
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(status_code=404, detail="Printer not found")
+
+    # Check printer is connected
+    if not printer_manager.is_connected(printer_id):
+        raise HTTPException(status_code=400, detail="Printer is not connected")
+
+    # Create archive from the library file
+    archive_service = ArchiveService(db)
+    archive = await archive_service.archive_print(
+        printer_id=printer_id,
+        source_file=file_path,
+    )
+
+    if not archive:
+        raise HTTPException(status_code=500, detail="Failed to create archive")
+
+    await db.flush()
+
+    # Prepare remote filename
+    base_name = lib_file.filename
+    if base_name.endswith(".gcode.3mf"):
+        base_name = base_name[:-10]
+    elif base_name.endswith(".3mf"):
+        base_name = base_name[:-4]
+    remote_filename = f"{base_name}.3mf"
+    remote_path = f"/{remote_filename}"
+
+    # Get FTP retry settings
+    ftp_retry_enabled, ftp_retry_count, ftp_retry_delay, ftp_timeout = await get_ftp_retry_settings()
+
+    # Delete existing file if present (avoids 553 error)
+    await delete_file_async(
+        printer.ip_address,
+        printer.access_code,
+        remote_path,
+        socket_timeout=ftp_timeout,
+        printer_model=printer.model,
+    )
+
+    # Upload file to printer
+    if ftp_retry_enabled:
+        uploaded = await with_ftp_retry(
+            upload_file_async,
+            printer.ip_address,
+            printer.access_code,
+            file_path,
+            remote_path,
+            socket_timeout=ftp_timeout,
+            printer_model=printer.model,
+            max_retries=ftp_retry_count,
+            retry_delay=ftp_retry_delay,
+            operation_name=f"Upload for print to {printer.name}",
+        )
+    else:
+        uploaded = await upload_file_async(
+            printer.ip_address,
+            printer.access_code,
+            file_path,
+            remote_path,
+            socket_timeout=ftp_timeout,
+            printer_model=printer.model,
+        )
+
+    if not uploaded:
+        raise HTTPException(status_code=500, detail="Failed to upload file to printer")
+
+    # Register this as an expected print so we don't create a duplicate archive
+    register_expected_print(printer_id, remote_filename, archive.id)
+
+    # Determine plate ID
+    if body.plate_id is not None:
+        plate_id = body.plate_id
+    else:
+        plate_id = 1
+        try:
+            with zipfile.ZipFile(file_path, "r") as zf:
+                for name in zf.namelist():
+                    if name.startswith("Metadata/plate_") and name.endswith(".gcode"):
+                        plate_str = name[15:-6]
+                        plate_id = int(plate_str)
+                        break
+        except Exception:
+            pass
+
+    logger.info(
+        f"Print library file {file_id}: archive_id={archive.id}, plate_id={plate_id}, "
+        f"ams_mapping={body.ams_mapping}, bed_levelling={body.bed_levelling}"
+    )
+
+    # Start the print
+    started = printer_manager.start_print(
+        printer_id,
+        remote_filename,
+        plate_id,
+        ams_mapping=body.ams_mapping,
+        timelapse=body.timelapse,
+        bed_levelling=body.bed_levelling,
+        flow_cali=body.flow_cali,
+        vibration_cali=body.vibration_cali,
+        layer_inspect=body.layer_inspect,
+        use_ams=body.use_ams,
+    )
+
+    if not started:
+        raise HTTPException(status_code=500, detail="Failed to start print")
+
+    await db.commit()
+
+    return {
+        "status": "printing",
+        "printer_id": printer_id,
+        "archive_id": archive.id,
+        "filename": lib_file.filename,
+    }
 
 
 # ============ File Detail Endpoints ============

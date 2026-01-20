@@ -52,12 +52,12 @@ def on_message(client, userdata, msg):
 
         # Always log calibration messages with full detail
         if is_cali_msg:
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] *** CALIBRATION COMMAND: {command} ***")
             print(f"Topic: {msg.topic}")
             print("Full payload:")
             print(json.dumps(payload, indent=2))
-            print(f"{'='*80}\n")
+            print(f"{'=' * 80}\n")
         else:
             # For other messages, just show a brief summary
             if "print" in payload:

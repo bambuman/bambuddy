@@ -17,7 +17,9 @@ UTCDatetime = Annotated[datetime | None, PlainSerializer(serialize_utc_datetime)
 
 class PrintQueueItemCreate(BaseModel):
     printer_id: int | None = None  # None = unassigned, user assigns later
-    archive_id: int
+    # Either archive_id OR library_file_id must be provided
+    archive_id: int | None = None
+    library_file_id: int | None = None
     scheduled_time: datetime | None = None  # None = ASAP (next when idle)
     require_previous_success: bool = False
     auto_off_after: bool = False  # Power off printer after print completes
@@ -57,7 +59,8 @@ class PrintQueueItemUpdate(BaseModel):
 class PrintQueueItemResponse(BaseModel):
     id: int
     printer_id: int | None  # None = unassigned
-    archive_id: int
+    archive_id: int | None  # None if library_file_id is set (archive created at print start)
+    library_file_id: int | None  # For queue items from library files
     position: int
     scheduled_time: UTCDatetime
     require_previous_success: bool
@@ -81,8 +84,10 @@ class PrintQueueItemResponse(BaseModel):
     # Nested info for UI (populated in route)
     archive_name: str | None = None
     archive_thumbnail: str | None = None
+    library_file_name: str | None = None  # Name of library file (if library_file_id is set)
+    library_file_thumbnail: str | None = None  # Thumbnail of library file
     printer_name: str | None = None
-    print_time_seconds: int | None = None  # Estimated print time from archive
+    print_time_seconds: int | None = None  # Estimated print time from archive or library file
 
     class Config:
         from_attributes = True
