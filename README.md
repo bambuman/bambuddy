@@ -134,6 +134,12 @@
 - Live application log viewer with filtering
 - Support bundle generator (privacy-filtered)
 
+### 🔒 Optional Authentication
+- Enable/disable authentication any time
+- Role-based access (Admin/User)
+- JWT tokens with secure password hashing
+- User management (create, edit, delete)
+
 </td>
 </tr>
 </table>

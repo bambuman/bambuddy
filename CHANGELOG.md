@@ -71,6 +71,14 @@ All notable changes to Bambuddy will be documented in this file.
   - Three-dot menu button always visible on mobile (hover-only on desktop)
   - Selection checkbox always visible on mobile devices
   - Better PWA experience for file management
+- **Optional Authentication** - Secure your Bambuddy instance with user authentication:
+  - Enable/disable authentication via Setup page or Settings → Users
+  - Role-based access control: Admin and User roles
+  - Admins have full access; Users can manage prints but not settings
+  - JWT-based authentication with 7-day token expiration
+  - User management page for creating, editing, and deleting users
+  - Backward compatible: existing installations work without authentication
+  - Settings page restricted to admin users when auth is enabled
 
 ### Changed
 - **Edit Queue Item modal** - Single printer selection only (reassigns item, doesn't duplicate)

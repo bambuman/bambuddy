@@ -81,7 +81,9 @@ async def is_auth_enabled(db: AsyncSession) -> bool:
     try:
         result = await db.execute(select(Settings).where(Settings.key == "auth_enabled"))
         setting = result.scalar_one_or_none()
-        return setting and setting.value.lower() == "true"
+        if setting is None:
+            return False
+        return setting.value.lower() == "true"
     except Exception:
         # If settings table doesn't exist or query fails, assume auth is disabled
         return False
@@ -110,13 +112,17 @@ async def get_current_user_optional(
         return user
 
 
-async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]) -> User:
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+) -> User:
     """Get the current authenticated user from JWT token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if credentials is None:
+        raise credentials_exception
     try:
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

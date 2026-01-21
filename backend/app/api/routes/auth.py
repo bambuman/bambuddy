@@ -24,7 +24,9 @@ async def is_auth_enabled(db: AsyncSession) -> bool:
     """Check if authentication is enabled."""
     result = await db.execute(select(Settings).where(Settings.key == "auth_enabled"))
     setting = result.scalar_one_or_none()
-    return setting and setting.value.lower() == "true"
+    if setting is None:
+        return False
+    return setting.value.lower() == "true"
 
 
 async def set_auth_enabled(db: AsyncSession, enabled: bool) -> None:
