@@ -1,7 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Plug, AlertTriangle, RotateCcw, Bell, Download, RefreshCw, ExternalLink, Globe, Droplets, Thermometer, FileText, Edit2, Send, CheckCircle, XCircle, History, Trash2, Upload, Zap, TrendingUp, Calendar, DollarSign, Power, PowerOff, Key, Copy, Database, Info, X, Shield, Printer, Cylinder, Wifi, Home, Video } from 'lucide-react';
+import { Loader2, Plus, Plug, AlertTriangle, RotateCcw, Bell, Download, RefreshCw, ExternalLink, Globe, Droplets, Thermometer, FileText, Edit2, Send, CheckCircle, XCircle, History, Trash2, Upload, Zap, TrendingUp, Calendar, DollarSign, Power, PowerOff, Key, Copy, Database, Info, X, Shield, Printer, Cylinder, Wifi, Home, Video, Users, Lock, Unlock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
 import { formatDateOnly } from '../utils/date';
 import type { AppSettings, AppSettingsUpdate, SmartPlug, SmartPlugStatus, NotificationProvider, NotificationTemplate, UpdateStatus } from '../api/client';
 import { Card, CardContent, CardHeader } from '../components/Card';
@@ -29,8 +31,10 @@ import { Palette } from 'lucide-react';
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const { showToast, showPersistentToast, dismissToast } = useToast();
+  const { authEnabled, user, refreshAuth } = useAuth();
   const {
     mode,
     darkStyle, darkBackground, darkAccent,
@@ -46,7 +50,7 @@ export function SettingsPage() {
   const [editingTemplate, setEditingTemplate] = useState<NotificationTemplate | null>(null);
   const [showLogViewer, setShowLogViewer] = useState(false);
   const [defaultView, setDefaultViewState] = useState<string>(getDefaultView());
-  const [activeTab, setActiveTab] = useState<'general' | 'network' | 'plugs' | 'notifications' | 'filament' | 'apikeys' | 'virtual-printer'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'network' | 'plugs' | 'notifications' | 'filament' | 'apikeys' | 'virtual-printer' | 'users'>('general');
   const [showCreateAPIKey, setShowCreateAPIKey] = useState(false);
   const [newAPIKeyName, setNewAPIKeyName] = useState('');
   const [newAPIKeyPermissions, setNewAPIKeyPermissions] = useState({
@@ -66,6 +70,7 @@ export function SettingsPage() {
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [showTelemetryInfo, setShowTelemetryInfo] = useState(false);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+  const [showDisableAuthConfirm, setShowDisableAuthConfirm] = useState(false);
 
   // Home Assistant test connection state
   const [haTestResult, setHaTestResult] = useState<{ success: boolean; message: string | null; error: string | null } | null>(null);
@@ -474,7 +479,7 @@ export function SettingsPage() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-1 mb-6 border-b border-bambu-dark-tertiary">
+      <div className="flex gap-1 mb-6 border-b border-bambu-dark-tertiary overflow-x-auto">
         <button
           onClick={() => setActiveTab('general')}
           className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
@@ -567,6 +572,20 @@ export function SettingsPage() {
           <Printer className="w-4 h-4" />
           Virtual Printer
           <span className={`w-2 h-2 rounded-full ${virtualPrinterRunning ? 'bg-green-400' : 'bg-gray-500'}`} />
+        </button>
+        <button
+          onClick={() => setActiveTab('users')}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2 ${
+            activeTab === 'users'
+              ? 'text-bambu-green border-bambu-green'
+              : 'text-bambu-gray hover:text-gray-900 dark:hover:text-white border-transparent'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          Users
+          {authEnabled && (
+            <span className={`w-2 h-2 rounded-full ${authEnabled ? 'bg-green-400' : 'bg-gray-500'}`} />
+          )}
         </button>
       </div>
 
@@ -2865,6 +2884,226 @@ export function SettingsPage() {
             </div>
           </Card>
         </div>
+      )}
+
+      {/* Users Tab */}
+      {activeTab === 'users' && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+          <div>
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Users className="w-5 h-5 text-bambu-green" />
+                User Authentication
+              </h2>
+              <p className="text-sm text-bambu-gray mt-1">
+                Enable authentication to secure your Bambuddy instance and manage user access.
+              </p>
+            </div>
+
+            <Card>
+              <CardContent className="py-6">
+                {!authEnabled ? (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center ${authEnabled ? 'bg-green-500/20' : 'bg-gray-500/20'}`}>
+                        {authEnabled ? (
+                          <Lock className="w-6 h-6 text-green-400" />
+                        ) : (
+                          <Unlock className="w-6 h-6 text-gray-400" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-white font-medium">Authentication Disabled</h3>
+                        <p className="text-sm text-bambu-gray">
+                          Your Bambuddy instance is currently accessible without authentication.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-bambu-dark-tertiary">
+                      <p className="text-sm text-bambu-gray mb-4">
+                        Enable authentication to:
+                      </p>
+                      <ul className="space-y-2 text-sm text-bambu-gray mb-4">
+                        <li className="flex items-start gap-2">
+                          <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                          <span>Require login to access the system</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                          <span>Manage multiple users with different roles</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                          <span>Control access to printer settings and user management</span>
+                        </li>
+                      </ul>
+
+                      <Button
+                        onClick={() => navigate('/setup')}
+                        className="w-full"
+                      >
+                        <Lock className="w-4 h-4" />
+                        Activate Authentication
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-full flex items-center justify-center bg-green-500/20">
+                        <Lock className="w-6 h-6 text-green-400" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-white font-medium">Authentication Enabled</h3>
+                        <p className="text-sm text-bambu-gray">
+                          Your Bambuddy instance is secured with authentication.
+                        </p>
+                      </div>
+                    </div>
+
+                    {user && (
+                      <div className="pt-4 border-t border-bambu-dark-tertiary">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <p className="text-sm text-bambu-gray">Current User</p>
+                            <p className="text-white font-medium">{user.username}</p>
+                            <p className="text-xs text-bambu-gray mt-1">
+                              Role: <span className="capitalize">{user.role}</span>
+                            </p>
+                          </div>
+                          <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            user.role === 'admin' 
+                              ? 'bg-purple-500/20 text-purple-300' 
+                              : 'bg-blue-500/20 text-blue-300'
+                          }`}>
+                            {user.role === 'admin' ? 'Admin' : 'User'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-4 border-t border-bambu-dark-tertiary space-y-3">
+                      <Button
+                        onClick={() => navigate('/users')}
+                        className="w-full"
+                        variant="secondary"
+                      >
+                        <Users className="w-4 h-4" />
+                        Manage Users
+                      </Button>
+                      
+                      {user?.role === 'admin' && (
+                        <Button
+                          onClick={() => setShowDisableAuthConfirm(true)}
+                          className="w-full"
+                          variant="secondary"
+                        >
+                          <Unlock className="w-4 h-4" />
+                          Disable Authentication
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {authEnabled && (
+            <div>
+              <div className="mb-6">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-bambu-green" />
+                  Role Permissions
+                </h2>
+                <p className="text-sm text-bambu-gray mt-1">
+                  Overview of what each role can do.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center">
+                        <Shield className="w-4 h-4 text-purple-300" />
+                      </div>
+                      <h3 className="text-white font-medium">Admin</h3>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-2 text-sm text-bambu-gray">
+                      <li className="flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                        <span>Manage printer settings</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                        <span>Create, edit, and delete users</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                        <span>Access all system features</span>
+                      </li>
+                    </ul>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
+                        <Users className="w-4 h-4 text-blue-300" />
+                      </div>
+                      <h3 className="text-white font-medium">User</h3>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-2 text-sm text-bambu-gray">
+                      <li className="flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                        <span>Send print jobs</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                        <span>Manage files and archives</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 text-bambu-green mt-0.5 flex-shrink-0" />
+                        <span>Manage filament</span>
+                      </li>
+                    </ul>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Disable Authentication Confirmation Modal */}
+      {showDisableAuthConfirm && (
+        <ConfirmModal
+          title="Disable Authentication"
+          message="Are you sure you want to disable authentication? This will make your Bambuddy instance accessible without login. All users will remain in the database but authentication will be disabled."
+          confirmText="Disable Authentication"
+          variant="danger"
+          onConfirm={async () => {
+            try {
+              await api.disableAuth();
+              showToast('Authentication disabled successfully', 'success');
+              await refreshAuth();
+              setShowDisableAuthConfirm(false);
+              // Refresh the page to ensure all protected routes are accessible
+              window.location.href = '/';
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : 'Failed to disable authentication';
+              showToast(message, 'error');
+            }
+          }}
+          onCancel={() => setShowDisableAuthConfirm(false)}
+        />
       )}
     </div>
   );

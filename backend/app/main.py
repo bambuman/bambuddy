@@ -54,6 +54,7 @@ from backend.app.api.routes import (
     ams_history,
     api_keys,
     archives,
+    auth,
     camera,
     cloud,
     discovery,
@@ -75,6 +76,7 @@ from backend.app.api.routes import (
     support,
     system,
     updates,
+    users,
     webhook,
     websocket,
 )
@@ -1961,6 +1963,8 @@ app = FastAPI(
 )
 
 # API routes
+app.include_router(auth.router, prefix=app_settings.api_prefix)
+app.include_router(users.router, prefix=app_settings.api_prefix)
 app.include_router(printers.router, prefix=app_settings.api_prefix)
 app.include_router(archives.router, prefix=app_settings.api_prefix)
 app.include_router(filaments.router, prefix=app_settings.api_prefix)

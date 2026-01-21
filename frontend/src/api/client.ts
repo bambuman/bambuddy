@@ -1,19 +1,47 @@
 const API_BASE = '/api/v1';
 
+// Auth token storage
+let authToken: string | null = localStorage.getItem('auth_token');
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+  if (token) {
+    localStorage.setItem('auth_token', token);
+  } else {
+    localStorage.removeItem('auth_token');
+  }
+}
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...options.headers as Record<string, string>,
+  };
+
+  // Add auth token if available
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     cache: 'no-store', // Prevent browser caching of API responses
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
+    // Handle 401 Unauthorized - clear token and redirect to login
+    if (response.status === 401) {
+      setAuthToken(null);
+      // Don't throw here - let the auth context handle redirect
+    }
     const error = await response.json().catch(() => ({}));
     const detail = error.detail;
     const message = typeof detail === 'string'
@@ -1375,8 +1403,97 @@ export interface ExternalLinkUpdate {
   icon?: string;
 }
 
+// Auth types
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: UserResponse;
+}
+
+export interface UserResponse {
+  id: number;
+  username: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface UserCreate {
+  username: string;
+  password: string;
+  role: string;
+}
+
+export interface UserUpdate {
+  username?: string;
+  password?: string;
+  role?: string;
+  is_active?: boolean;
+}
+
+export interface SetupRequest {
+  auth_enabled: boolean;
+  admin_username?: string;
+  admin_password?: string;
+}
+
+export interface SetupResponse {
+  auth_enabled: boolean;
+  admin_created?: boolean;
+}
+
+export interface AuthStatus {
+  auth_enabled: boolean;
+  requires_setup: boolean;
+}
+
 // API functions
 export const api = {
+  // Authentication
+  getAuthStatus: () => request<AuthStatus>('/auth/status'),
+  setupAuth: (data: SetupRequest) =>
+    request<SetupResponse>('/auth/setup', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  login: (data: LoginRequest) =>
+    request<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  logout: () =>
+    request<{ message: string }>('/auth/logout', {
+      method: 'POST',
+    }),
+  getCurrentUser: () => request<UserResponse>('/auth/me'),
+  disableAuth: () =>
+    request<{ message: string; auth_enabled: boolean }>('/auth/disable', {
+      method: 'POST',
+    }),
+
+  // Users (admin only)
+  getUsers: () => request<UserResponse[]>('/users/'),
+  getUser: (id: number) => request<UserResponse>(`/users/${id}`),
+  createUser: (data: UserCreate) =>
+    request<UserResponse>('/users/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateUser: (id: number, data: UserUpdate) =>
+    request<UserResponse>(`/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteUser: (id: number) =>
+    request<void>(`/users/${id}`, {
+      method: 'DELETE',
+    }),
+
   // Printers
   getPrinters: () => request<Printer[]>('/printers/'),
   getPrinter: (id: number) => request<Printer>(`/printers/${id}`),

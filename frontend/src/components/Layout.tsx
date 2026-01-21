@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Printer, Archive, Calendar, BarChart3, Cloud, Settings, Sun, Moon, ChevronLeft, ChevronRight, Keyboard, Github, GripVertical, ArrowUpCircle, Wrench, FolderKanban, FolderOpen, X, Menu, Info, Plug, Bug, type LucideIcon } from 'lucide-react';
+import { Printer, Archive, Calendar, BarChart3, Cloud, Settings, Sun, Moon, ChevronLeft, ChevronRight, Keyboard, Github, GripVertical, ArrowUpCircle, Wrench, FolderKanban, FolderOpen, X, Menu, Info, Plug, Bug, LogOut, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, supportApi, pendingUploadsApi } from '../api/client';
 import { getIconByName } from './IconPicker';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useAuth } from '../contexts/AuthContext';
 
 interface NavItem {
   id: string;
@@ -68,6 +69,7 @@ export function Layout() {
   const { mode, toggleMode } = useTheme();
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+  const { user, authEnabled, logout } = useAuth();
   const [sidebarExpanded, setSidebarExpanded] = useState(() => {
     const stored = localStorage.getItem('sidebarExpanded');
     return stored !== 'false';
@@ -168,12 +170,20 @@ export function Layout() {
   const extLinksMap = useMemo(() => new Map((externalLinks || []).map(link => [`ext-${link.id}`, link])), [externalLinks]);
 
   // Compute the ordered sidebar: include stored order + any new items
+  // Filter out 'settings' for users with 'user' role
   const orderedSidebarIds = (() => {
     const result: string[] = [];
     const seen = new Set<string>();
+    
+    // Determine if settings should be hidden (user role and auth enabled)
+    const hideSettings = authEnabled && user?.role === 'user';
 
     // Add items in stored order
     for (const id of sidebarOrder) {
+      // Skip settings if user is not admin
+      if (hideSettings && id === 'settings') {
+        continue;
+      }
       if (navItemsMap.has(id) || extLinksMap.has(id)) {
         result.push(id);
         seen.add(id);
@@ -182,6 +192,10 @@ export function Layout() {
 
     // Add any new internal nav items not in stored order
     for (const item of defaultNavItems) {
+      // Skip settings if user is not admin
+      if (hideSettings && item.id === 'settings') {
+        continue;
+      }
       if (!seen.has(item.id)) {
         result.push(item.id);
         seen.add(item.id);
@@ -565,6 +579,15 @@ export function Layout() {
                 >
                   {mode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                 </button>
+                {authEnabled && user && (
+                  <button
+                    onClick={logout}
+                    className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
+                    title={t('nav.logout', { defaultValue: 'Logout' })}
+                  >
+                    <LogOut className="w-5 h-5" />
+                  </button>
+                )}
               </div>
               {/* Bottom row: version */}
               <div className="flex items-center justify-center gap-2">
@@ -642,6 +665,15 @@ export function Layout() {
               >
                 {mode === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
+              {authEnabled && user && (
+                <button
+                  onClick={logout}
+                  className="p-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors text-bambu-gray-light hover:text-white"
+                  title={t('nav.logout', { defaultValue: 'Logout' })}
+                >
+                  <LogOut className="w-5 h-5" />
+                </button>
+              )}
             </div>
           )}
         </div>

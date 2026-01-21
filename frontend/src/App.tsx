@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { PrintersPage } from './pages/PrintersPage';
@@ -14,9 +14,13 @@ import { FileManagerPage } from './pages/FileManagerPage';
 import { CameraPage } from './pages/CameraPage';
 import { ExternalLinkPage } from './pages/ExternalLinkPage';
 import { SystemInfoPage } from './pages/SystemInfoPage';
+import { LoginPage } from './pages/LoginPage';
+import { SetupPage } from './pages/SetupPage';
+import { UsersPage } from './pages/UsersPage';
 import { useWebSocket } from './hooks/useWebSocket';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,33 +36,95 @@ function WebSocketProvider({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { authEnabled, loading, user } = useAuth();
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  }
+
+  if (authEnabled && !user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { authEnabled, loading, user } = useAuth();
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  }
+
+  // If auth is not enabled, allow access (backward compatibility)
+  if (!authEnabled) {
+    return <>{children}</>;
+  }
+
+  // If auth is enabled but no user, redirect to login
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // If user is not admin, redirect to home
+  if (user.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function SetupRoute({ children }: { children: React.ReactNode }) {
+  const { authEnabled, loading } = useAuth();
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  }
+
+  if (authEnabled) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 function App() {
   return (
     <ThemeProvider>
       <ToastProvider>
         <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
-            <Routes>
-              {/* Camera page - standalone, no layout, no WebSocket (doesn't need real-time updates) */}
-              <Route path="/camera/:printerId" element={<CameraPage />} />
+          <AuthProvider>
+            <BrowserRouter>
+              <Routes>
+                {/* Setup page - only accessible if auth not enabled */}
+                <Route path="/setup" element={<SetupRoute><SetupPage /></SetupRoute>} />
 
-              {/* Main app with WebSocket for real-time updates */}
-              <Route element={<WebSocketProvider><Layout /></WebSocketProvider>}>
-                <Route index element={<PrintersPage />} />
-                <Route path="archives" element={<ArchivesPage />} />
-                <Route path="queue" element={<QueuePage />} />
-                <Route path="stats" element={<StatsPage />} />
-                <Route path="profiles" element={<ProfilesPage />} />
-                <Route path="maintenance" element={<MaintenancePage />} />
-                <Route path="projects" element={<ProjectsPage />} />
-                <Route path="projects/:id" element={<ProjectDetailPage />} />
-                <Route path="files" element={<FileManagerPage />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="system" element={<SystemInfoPage />} />
-                <Route path="external/:id" element={<ExternalLinkPage />} />
-              </Route>
-            </Routes>
-          </BrowserRouter>
+                {/* Login page */}
+                <Route path="/login" element={<LoginPage />} />
+
+                {/* Camera page - standalone, no layout, no WebSocket (doesn't need real-time updates) */}
+                <Route path="/camera/:printerId" element={<CameraPage />} />
+
+                {/* Main app with WebSocket for real-time updates */}
+                <Route element={<ProtectedRoute><WebSocketProvider><Layout /></WebSocketProvider></ProtectedRoute>}>
+                  <Route index element={<PrintersPage />} />
+                  <Route path="archives" element={<ArchivesPage />} />
+                  <Route path="queue" element={<QueuePage />} />
+                  <Route path="stats" element={<StatsPage />} />
+                  <Route path="profiles" element={<ProfilesPage />} />
+                  <Route path="maintenance" element={<MaintenancePage />} />
+                  <Route path="projects" element={<ProjectsPage />} />
+                  <Route path="projects/:id" element={<ProjectDetailPage />} />
+                  <Route path="files" element={<FileManagerPage />} />
+                  <Route path="settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
+                  <Route path="users" element={<UsersPage />} />
+                  <Route path="system" element={<SystemInfoPage />} />
+                  <Route path="external/:id" element={<ExternalLinkPage />} />
+                </Route>
+              </Routes>
+            </BrowserRouter>
+          </AuthProvider>
         </QueryClientProvider>
       </ToastProvider>
     </ThemeProvider>

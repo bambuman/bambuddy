@@ -59,6 +59,7 @@ async def test_engine():
         project,
         settings,
         smart_plug,
+        user,
     )
 
     async with engine.begin() as conn:
