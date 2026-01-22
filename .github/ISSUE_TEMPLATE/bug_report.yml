@@ -48,6 +48,7 @@ body:
         - X1
         - P1S
         - P1P
+        - P2S
         - A1
         - A1 Mini
         - H2D
@@ -103,14 +104,25 @@ body:
     validations:
       required: true
 
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### 📦 Support Package
+
+        For faster debugging, please create and attach a **Support Package** from **Settings → System Info → Download Support Package**.
+        This includes logs, system info, and configuration (with sensitive data redacted).
+
+        For detailed instructions on enabling debug logging, see: [Debug Logging Guide](https://wiki.bambuddy.cool/features/system-info/?h=debug#enable-debug-logging)
+
   - type: textarea
     id: logs
     attributes:
-      label: Relevant Logs
-      description: Please paste any relevant logs here. Check `logs/bambuddy.log` or use `DEBUG=true` for verbose logging.
+      label: Relevant Logs / Support Package
+      description: Attach a support package (.zip) or paste relevant logs here. Enable DEBUG mode for verbose logging.
       render: shell
       placeholder: |
-        Paste logs here...
+        Drag and drop your support package .zip file here, or paste logs...
 
   - type: textarea
     id: screenshots
