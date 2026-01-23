@@ -342,3 +342,106 @@ class TestLibraryAddToQueueAPI:
         assert len(result["added"]) == 0
         assert len(result["errors"]) == 1
         assert "sliced" in result["errors"][0]["error"].lower()
+
+
+class TestLibraryZipExtractAPI:
+    """Integration tests for ZIP extraction endpoint."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_extract_zip_invalid_file_type(self, async_client: AsyncClient, db_session):
+        """Verify non-ZIP files are rejected."""
+        # Create a fake file that's not a ZIP
+        files = {"file": ("test.txt", b"This is not a zip file", "text/plain")}
+        response = await async_client.post("/api/v1/library/files/extract-zip", files=files)
+        assert response.status_code == 400
+        assert "ZIP" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_extract_zip_basic(self, async_client: AsyncClient, db_session):
+        """Verify basic ZIP extraction works."""
+        import io
+        import zipfile
+
+        # Create a simple ZIP file in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("test1.txt", "Content of file 1")
+            zf.writestr("test2.txt", "Content of file 2")
+        zip_buffer.seek(0)
+
+        files = {"file": ("test.zip", zip_buffer.read(), "application/zip")}
+        response = await async_client.post("/api/v1/library/files/extract-zip", files=files)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["extracted"] == 2
+        assert len(result["files"]) == 2
+        assert len(result["errors"]) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_extract_zip_with_folders(self, async_client: AsyncClient, db_session):
+        """Verify ZIP extraction preserves folder structure."""
+        import io
+        import zipfile
+
+        # Create a ZIP file with folder structure
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("folder1/file1.txt", "Content 1")
+            zf.writestr("folder1/subfolder/file2.txt", "Content 2")
+            zf.writestr("folder2/file3.txt", "Content 3")
+        zip_buffer.seek(0)
+
+        files = {"file": ("test.zip", zip_buffer.read(), "application/zip")}
+        params = {"preserve_structure": "true"}
+        response = await async_client.post("/api/v1/library/files/extract-zip", files=files, params=params)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["extracted"] == 3
+        assert result["folders_created"] >= 3  # folder1, folder1/subfolder, folder2
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_extract_zip_flat(self, async_client: AsyncClient, db_session):
+        """Verify ZIP extraction can extract flat (no folders)."""
+        import io
+        import zipfile
+
+        # Create a ZIP file with folder structure
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("folder/file1.txt", "Content 1")
+            zf.writestr("folder/file2.txt", "Content 2")
+        zip_buffer.seek(0)
+
+        files = {"file": ("test.zip", zip_buffer.read(), "application/zip")}
+        params = {"preserve_structure": "false"}
+        response = await async_client.post("/api/v1/library/files/extract-zip", files=files, params=params)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["extracted"] == 2
+        assert result["folders_created"] == 0  # No folders created when flat
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_extract_zip_skips_macos_files(self, async_client: AsyncClient, db_session):
+        """Verify ZIP extraction skips __MACOSX and hidden files."""
+        import io
+        import zipfile
+
+        # Create a ZIP file with macOS junk files
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("real_file.txt", "Real content")
+            zf.writestr("__MACOSX/._real_file.txt", "macOS metadata")
+            zf.writestr(".hidden_file", "Hidden content")
+        zip_buffer.seek(0)
+
+        files = {"file": ("test.zip", zip_buffer.read(), "application/zip")}
+        response = await async_client.post("/api/v1/library/files/extract-zip", files=files)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["extracted"] == 1  # Only real_file.txt
+        assert result["files"][0]["filename"] == "real_file.txt"

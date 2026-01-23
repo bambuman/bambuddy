@@ -121,7 +121,7 @@ if [ "$RUN_BUILD" = true ]; then
     print_header "Test 1: Docker Build"
     print_info "Building production Docker image..."
 
-    if sudo docker build -t bambuddy:test . --quiet --pull; then
+    if sudo docker build -t bambuddy:test . --pull --no-cache --progress=plain; then
         print_success "Production image builds successfully"
 
         # Verify image has expected labels/structure
@@ -149,7 +149,7 @@ if [ "$RUN_BACKEND" = true ]; then
     print_header "Test 2: Backend Unit Tests"
     print_info "Building backend test image..."
 
-    if sudo docker compose -f docker-compose.test.yml build backend-test --quiet --pull; then
+    if sudo docker compose -f docker-compose.test.yml build backend-test --pull --no-cache --progress=plain; then
         print_info "Running backend tests..."
         if sudo docker compose -f docker-compose.test.yml run --rm backend-test; then
             print_success "Backend unit tests passed"
@@ -168,7 +168,7 @@ if [ "$RUN_FRONTEND" = true ]; then
     print_header "Test 3: Frontend Unit Tests"
     print_info "Building frontend test image..."
 
-    if sudo docker compose -f docker-compose.test.yml build frontend-test --quiet --pull; then
+    if sudo docker compose -f docker-compose.test.yml build frontend-test --pull --no-cache --progress=plain; then
         print_info "Running frontend tests..."
         if sudo docker compose -f docker-compose.test.yml run --rm frontend-test; then
             print_success "Frontend unit tests passed"
@@ -188,7 +188,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
     print_info "Building integration container..."
 
     # Build the integration container first to ensure latest code
-    if ! sudo docker compose -f docker-compose.test.yml build integration --quiet --pull; then
+    if ! sudo docker compose -f docker-compose.test.yml build integration --pull --no-cache --progress=plain; then
         print_failure "Integration container build failed"
     else
         print_info "Starting application container..."

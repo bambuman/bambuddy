@@ -10,8 +10,10 @@ from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, Print
 # Models that have a real chamber temperature sensor
 # Based on Home Assistant Bambu Lab integration
 # P1P/P1S and A1/A1Mini do NOT have chamber temp sensors
+# Includes both display names and internal codes from MQTT/SSDP
 CHAMBER_TEMP_SUPPORTED_MODELS = frozenset(
     [
+        # Display names
         "X1",
         "X1C",
         "X1E",  # X1 series
@@ -20,6 +22,14 @@ CHAMBER_TEMP_SUPPORTED_MODELS = frozenset(
         "H2D",
         "H2DPRO",
         "H2S",  # H2 series
+        # Internal codes (from MQTT/SSDP)
+        "BL-P001",  # X1/X1C
+        "C13",  # X1E
+        "O1D",  # H2D
+        "O1C",  # H2C
+        "O1S",  # H2S
+        "O1E",  # H2D Pro
+        "N7",  # P2S
     ]
 )
 

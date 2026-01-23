@@ -521,3 +521,55 @@ class TestSmartPlugsAPI:
         result = response.json()
         assert result["state"] == "ON"
         assert result["reachable"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_create_homeassistant_plug_with_energy_sensors(self, async_client: AsyncClient):
+        """Verify HA plug can be created with energy sensor entities."""
+        data = {
+            "name": "HA Plug with Energy",
+            "plug_type": "homeassistant",
+            "ha_entity_id": "switch.printer_plug",
+            "ha_power_entity": "sensor.printer_power",
+            "ha_energy_today_entity": "sensor.printer_energy_today",
+            "ha_energy_total_entity": "sensor.printer_energy_total",
+            "enabled": True,
+        }
+
+        response = await async_client.post("/api/v1/smart-plugs/", json=data)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["ha_power_entity"] == "sensor.printer_power"
+        assert result["ha_energy_today_entity"] == "sensor.printer_energy_today"
+        assert result["ha_energy_total_entity"] == "sensor.printer_energy_total"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_update_ha_energy_sensor_entities(self, async_client: AsyncClient, smart_plug_factory, db_session):
+        """Verify HA energy sensor entities can be updated."""
+        plug = await smart_plug_factory(plug_type="homeassistant", ha_entity_id="switch.test")
+
+        response = await async_client.patch(
+            f"/api/v1/smart-plugs/{plug.id}",
+            json={
+                "ha_power_entity": "sensor.new_power",
+                "ha_energy_today_entity": "sensor.new_today",
+                "ha_energy_total_entity": "sensor.new_total",
+            },
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["ha_power_entity"] == "sensor.new_power"
+        assert result["ha_energy_today_entity"] == "sensor.new_today"
+        assert result["ha_energy_total_entity"] == "sensor.new_total"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_ha_sensors_endpoint_not_configured(self, async_client: AsyncClient):
+        """Verify HA sensors endpoint returns error when not configured."""
+        response = await async_client.get("/api/v1/smart-plugs/ha/sensors")
+
+        assert response.status_code == 400
+        assert "not configured" in response.json()["detail"].lower()

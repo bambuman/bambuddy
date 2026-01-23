@@ -14,7 +14,6 @@ import {
   FileBox,
   Clock,
   HardDrive,
-  Copy,
   File,
   MoveRight,
   CheckSquare,
@@ -418,12 +417,15 @@ interface UploadFile {
   file: File;
   status: 'pending' | 'uploading' | 'success' | 'error';
   error?: string;
+  isZip?: boolean;
+  extractedCount?: number;
 }
 
 function UploadModal({ folderId, onClose, onUploadComplete }: UploadModalProps) {
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [preserveZipStructure, setPreserveZipStructure] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -453,6 +455,7 @@ function UploadModal({ folderId, onClose, onUploadComplete }: UploadModalProps) 
     const uploadFiles: UploadFile[] = newFiles.map((file) => ({
       file,
       status: 'pending',
+      isZip: file.name.toLowerCase().endsWith('.zip'),
     }));
     setFiles((prev) => [...prev, ...uploadFiles]);
   };
@@ -460,6 +463,8 @@ function UploadModal({ folderId, onClose, onUploadComplete }: UploadModalProps) 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const hasZipFiles = files.some((f) => f.isZip && f.status === 'pending');
 
   const handleUpload = async () => {
     if (files.length === 0) return;
@@ -474,10 +479,28 @@ function UploadModal({ folderId, onClose, onUploadComplete }: UploadModalProps) 
       );
 
       try {
-        await api.uploadLibraryFile(files[i].file, folderId);
-        setFiles((prev) =>
-          prev.map((f, idx) => (idx === i ? { ...f, status: 'success' } : f))
-        );
+        if (files[i].isZip) {
+          // Extract ZIP file
+          const result = await api.extractZipFile(files[i].file, folderId, preserveZipStructure);
+          setFiles((prev) =>
+            prev.map((f, idx) =>
+              idx === i
+                ? {
+                    ...f,
+                    status: result.errors.length > 0 && result.extracted === 0 ? 'error' : 'success',
+                    extractedCount: result.extracted,
+                    error: result.errors.length > 0 ? `${result.errors.length} files failed` : undefined,
+                  }
+                : f
+            )
+          );
+        } else {
+          // Regular file upload
+          await api.uploadLibraryFile(files[i].file, folderId);
+          setFiles((prev) =>
+            prev.map((f, idx) => (idx === i ? { ...f, status: 'success' } : f))
+          );
+        }
       } catch (err) {
         setFiles((prev) =>
           prev.map((f, idx) =>
@@ -528,15 +551,41 @@ function UploadModal({ folderId, onClose, onUploadComplete }: UploadModalProps) 
               {isDragging ? 'Drop files here' : 'Drag & drop files here'}
             </p>
             <p className="text-sm text-bambu-gray mt-1">or click to browse</p>
+            <p className="text-xs text-bambu-gray/70 mt-2">ZIP files will be automatically extracted</p>
           </div>
 
           <input
             ref={fileInputRef}
             type="file"
             multiple
+            accept="*/*,.zip"
             className="hidden"
             onChange={handleFileSelect}
           />
+
+          {/* ZIP Options */}
+          {hasZipFiles && (
+            <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <div className="flex items-start gap-3">
+                <ArchiveIcon className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm text-blue-300 font-medium">ZIP files detected</p>
+                  <p className="text-xs text-blue-300/70 mt-1">
+                    ZIP files will be extracted. Choose how to handle folder structure:
+                  </p>
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={preserveZipStructure}
+                      onChange={(e) => setPreserveZipStructure(e.target.checked)}
+                      className="w-4 h-4 rounded border-bambu-dark-tertiary bg-bambu-dark text-bambu-green focus:ring-bambu-green"
+                    />
+                    <span className="text-sm text-white">Preserve folder structure from ZIP</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* File List */}
           {files.length > 0 && (
@@ -546,11 +595,21 @@ function UploadModal({ folderId, onClose, onUploadComplete }: UploadModalProps) 
                   key={index}
                   className="flex items-center gap-3 p-2 bg-bambu-dark rounded-lg"
                 >
-                  <File className="w-4 h-4 text-bambu-gray flex-shrink-0" />
+                  {uploadFile.isZip ? (
+                    <ArchiveIcon className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                  ) : (
+                    <File className="w-4 h-4 text-bambu-gray flex-shrink-0" />
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-white truncate">{uploadFile.file.name}</p>
                     <p className="text-xs text-bambu-gray">
                       {(uploadFile.file.size / 1024 / 1024).toFixed(2)} MB
+                      {uploadFile.isZip && uploadFile.status === 'pending' && (
+                        <span className="text-blue-400 ml-2">• Will be extracted</span>
+                      )}
+                      {uploadFile.extractedCount !== undefined && (
+                        <span className="text-green-400 ml-2">• {uploadFile.extractedCount} files extracted</span>
+                      )}
                     </p>
                   </div>
                   {uploadFile.status === 'pending' && (
@@ -786,13 +845,6 @@ function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQue
           />
         ) : (
           <FileBox className="w-12 h-12 text-bambu-gray/30" />
-        )}
-        {/* Duplicate badge */}
-        {file.duplicate_count > 0 && (
-          <div className="absolute top-2 left-2 flex items-center gap-1 bg-amber-500/90 text-white text-xs px-1.5 py-0.5 rounded">
-            <Copy className="w-3 h-3" />
-            {file.duplicate_count}
-          </div>
         )}
         {/* File type badge */}
         <div className={`absolute top-2 right-2 text-xs px-1.5 py-0.5 rounded font-medium ${
@@ -1061,6 +1113,22 @@ export function FileManagerPage() {
     },
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (fileIds: number[]) => api.bulkDeleteLibrary(fileIds, []),
+    onSuccess: (_, fileIds) => {
+      queryClient.invalidateQueries({ queryKey: ['library-files'] });
+      queryClient.invalidateQueries({ queryKey: ['library-folders'] });
+      queryClient.invalidateQueries({ queryKey: ['library-stats'] });
+      showToast(`Deleted ${fileIds.length} files`, 'success');
+      setSelectedFiles([]);
+      setDeleteConfirm(null);
+    },
+    onError: (error: Error) => {
+      setDeleteConfirm(null);
+      showToast(error.message, 'error');
+    },
+  });
+
   const moveFilesMutation = useMutation({
     mutationFn: ({ fileIds, folderId }: { fileIds: number[]; folderId: number | null }) =>
       api.moveLibraryFiles(fileIds, folderId),
@@ -1191,20 +1259,11 @@ export function FileManagerPage() {
     } else if (deleteConfirm.type === 'folder') {
       deleteFolderMutation.mutate(deleteConfirm.id);
     } else if (deleteConfirm.type === 'bulk') {
-      // Bulk delete selected files
-      api.bulkDeleteLibrary(selectedFiles, []).then(() => {
-        queryClient.invalidateQueries({ queryKey: ['library-files'] });
-        queryClient.invalidateQueries({ queryKey: ['library-folders'] });
-        queryClient.invalidateQueries({ queryKey: ['library-stats'] });
-        showToast(`Deleted ${selectedFiles.length} files`, 'success');
-        setSelectedFiles([]);
-        setDeleteConfirm(null);
-      }).catch((err) => {
-        showToast(err.message, 'error');
-        setDeleteConfirm(null);
-      });
+      bulkDeleteMutation.mutate(selectedFiles);
     }
   };
+
+  const isDeleting = deleteFolderMutation.isPending || deleteFileMutation.isPending || bulkDeleteMutation.isPending;
 
   const handleViewModeChange = (mode: 'grid' | 'list') => {
     setViewMode(mode);
@@ -1609,12 +1668,6 @@ export function FileManagerPage() {
                       </div>
                       <div className="min-w-0">
                         <div className="text-sm text-white truncate">{file.print_name || file.filename}</div>
-                        {file.duplicate_count > 0 && (
-                          <div className="flex items-center gap-1 text-xs text-amber-400">
-                            <Copy className="w-3 h-3" />
-                            {file.duplicate_count} duplicate(s)
-                          </div>
-                        )}
                       </div>
                     </div>
                     {/* Type */}
@@ -1739,6 +1792,8 @@ export function FileManagerPage() {
           }
           confirmText="Delete"
           variant="danger"
+          isLoading={isDeleting}
+          loadingText="Deleting..."
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeleteConfirm(null)}
         />

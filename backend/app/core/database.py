@@ -49,6 +49,7 @@ async def init_db():
         project_bom,
         settings,
         smart_plug,
+        user,
     )
 
     async with engine.begin() as conn:
@@ -638,6 +639,39 @@ async def run_migrations(conn):
             )
             await conn.execute(text("DROP TABLE print_queue"))
             await conn.execute(text("ALTER TABLE print_queue_new2 RENAME TO print_queue"))
+    except Exception:
+        pass
+
+    # Migration: Add HA energy sensor entity columns to smart_plugs
+    try:
+        await conn.execute(text("ALTER TABLE smart_plugs ADD COLUMN ha_power_entity VARCHAR(100)"))
+    except Exception:
+        pass
+    try:
+        await conn.execute(text("ALTER TABLE smart_plugs ADD COLUMN ha_energy_today_entity VARCHAR(100)"))
+    except Exception:
+        pass
+    try:
+        await conn.execute(text("ALTER TABLE smart_plugs ADD COLUMN ha_energy_total_entity VARCHAR(100)"))
+    except Exception:
+        pass
+
+    # Migration: Create users table for authentication
+    try:
+        await conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                username VARCHAR(100) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'user',
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        )
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_username ON users(username)"))
     except Exception:
         pass
 

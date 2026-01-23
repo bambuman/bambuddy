@@ -2,6 +2,47 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [0.1.6b11] - 2026-01-22
+
+### New Features
+- **Camera Zoom & Fullscreen** - Enhanced camera viewer controls:
+  - Fullscreen mode for embedded camera viewer (new button in header)
+  - Zoom controls (100%-400%) for both embedded and window modes
+  - Pan support when zoomed in (click and drag)
+  - Mouse wheel zoom support
+  - Zoom resets on mode switch, refresh, or fullscreen toggle
+- **Searchable HA Entity Selection** - Improved Home Assistant smart plug configuration:
+  - Entity dropdown replaced with searchable combobox
+  - Type to search across all HA entities (not just switch/light/input_boolean)
+  - Energy sensor dropdowns (Power, Energy Today, Total) are now searchable
+  - Find sensors with non-standard naming that don't match the switch entity name
+- **Home Assistant Energy Sensor Support** - HA smart plugs can now use separate sensor entities for energy monitoring:
+  - Configure dedicated power sensor (W), today's energy (kWh), and total energy (kWh) sensors
+  - Supports plugs where energy data is exposed as separate sensor entities (common with Tapo, IKEA Zigbee2mqtt, etc.)
+  - Energy sensors are selectable from all available HA sensors with power/energy units
+  - Falls back to switch entity attributes if no sensors configured
+  - Print energy tracking now works correctly for HA plugs (not just Tasmota)
+  - New API endpoint: `GET /api/v1/smart-plugs/ha/sensors` to list available energy sensors
+- **Finish Photo in Notifications** - Camera snapshot URL available in notification templates (Issue #126):
+  - New `{finish_photo_url}` template variable for print_complete, print_failed, print_stopped events
+  - Photo is captured before notification is sent (ensures image is available)
+  - New "External URL" setting in Settings → Network (auto-detects from browser)
+  - Full URL constructed for external notification services (Telegram, Email, Discord, etc.)
+- **ZIP File Support in File Manager** - Upload and extract ZIP files directly in the library (Issue #121):
+  - Drop or select ZIP files to automatically extract contents
+  - Option to preserve folder structure from ZIP or extract flat
+  - Extracts thumbnails and metadata from 3MF/gcode files inside ZIP
+  - Progress indicator shows number of files extracted
+
+### Fixed
+- **Print time stats using slicer estimates** - Quick Stats "Print Time" now uses actual elapsed time (`completed_at - started_at`) instead of slicer estimates; cancelled prints only count time actually printed (Issue #137)
+- **Skip objects modal overflow** - Modal now has max height (85vh) with scrollable object list when printing many items on the bed (Issue #134)
+- **Filament cost using wrong default** - Statistics now correctly uses the "Default filament cost (per kg)" setting instead of hardcoded €25 value (Issue #120)
+- **Spoolman tag field not auto-created** - The required "tag" extra field is now automatically created in Spoolman on first connect, fixing sync failures for fresh Spoolman installs (Issue #123)
+- **P2S/X1E/H2 completion photo not captured** - Internal model codes (N7, C13, O1D, etc.) from MQTT/SSDP are now recognized for RTSP camera support (Issue #127)
+- **Mattermost/Slack webhook 400 error** - Added "Slack / Mattermost" payload format option that sends `{"text": "..."}` instead of custom fields (Issue #133)
+- **Subnet scan serial number** - Fixed A1 Mini subnet discovery showing "unknown-*" placeholder; serial field is now cleared so users know to enter it manually (Issue #140)
+
 ## [0.1.6b10] - 2026-01-21
 
 ### New Features
@@ -71,6 +112,14 @@ All notable changes to Bambuddy will be documented in this file.
   - Three-dot menu button always visible on mobile (hover-only on desktop)
   - Selection checkbox always visible on mobile devices
   - Better PWA experience for file management
+- **Optional Authentication** - Secure your Bambuddy instance with user authentication:
+  - Enable/disable authentication via Setup page or Settings → Users
+  - Role-based access control: Admin and User roles
+  - Admins have full access; Users can manage prints but not settings
+  - JWT-based authentication with 7-day token expiration
+  - User management page for creating, editing, and deleting users
+  - Backward compatible: existing installations work without authentication
+  - Settings page restricted to admin users when auth is enabled
 
 ### Changed
 - **Edit Queue Item modal** - Single printer selection only (reassigns item, doesn't duplicate)

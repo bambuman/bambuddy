@@ -557,6 +557,38 @@ class TestNotificationProviderTypes:
             assert success is False
             assert "Connection failed" in message or "error" in message.lower()
 
+    @pytest.mark.asyncio
+    async def test_webhook_slack_format_sends_text_only(self, service):
+        """Verify Slack/Mattermost format sends only text field."""
+        config = {
+            "webhook_url": "http://mattermost.local/hooks/abc123",
+            "payload_format": "slack",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(service, "_get_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+
+            success, message = await service._send_webhook(config, "Test Title", "Test Message")
+
+            assert success is True
+            mock_client.post.assert_called_once()
+
+            # Verify payload format is Slack-compatible
+            call_args = mock_client.post.call_args
+            payload = call_args.kwargs.get("json") or call_args[1].get("json")
+            assert "text" in payload
+            assert "*Test Title*" in payload["text"]
+            assert "Test Message" in payload["text"]
+            # Should NOT have generic fields
+            assert "timestamp" not in payload
+            assert "source" not in payload
+
 
 class TestNotificationVariableFallbacks:
     """Tests for notification variable fallback values."""
@@ -650,6 +682,45 @@ class TestNotificationVariableFallbacks:
             # When archive data is provided, duration should not be "Unknown"
             if captured_variables.get("duration"):
                 assert captured_variables["duration"] != "Unknown"
+
+    @pytest.mark.asyncio
+    async def test_print_complete_with_finish_photo_url(self, service):
+        """Verify finish_photo_url is passed through from archive_data."""
+        mock_db = AsyncMock()
+        mock_provider = MagicMock()
+        mock_provider.id = 1
+
+        captured_variables = {}
+
+        async def capture_build(db, event_type, variables):
+            captured_variables.update(variables)
+            return ("Test", "Test")
+
+        with (
+            patch.object(service, "_get_providers_for_event", new_callable=AsyncMock) as mock_get,
+            patch.object(service, "_send_to_providers", new_callable=AsyncMock),
+            patch.object(service, "_build_message_from_template", side_effect=capture_build),
+        ):
+            mock_get.return_value = [mock_provider]
+
+            await service.on_print_complete(
+                printer_id=1,
+                printer_name="Test",
+                status="completed",
+                data={"subtask_name": "test_print"},
+                db=mock_db,
+                archive_data={
+                    "print_time_seconds": 3600,
+                    "actual_filament_grams": 50.5,
+                    "finish_photo_url": "http://localhost:8000/api/v1/archives/1/photos/finish_test.jpg",
+                },
+            )
+
+            # finish_photo_url should be passed through to template variables
+            assert (
+                captured_variables.get("finish_photo_url")
+                == "http://localhost:8000/api/v1/archives/1/photos/finish_test.jpg"
+            )
 
     @pytest.mark.asyncio
     async def test_print_start_estimated_time_fallback(self, service):

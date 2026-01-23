@@ -206,9 +206,13 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
       case 'webhook':
         return [
           { key: 'webhook_url', label: 'Webhook URL', placeholder: 'https://example.com/webhook', type: 'text', required: true },
+          { key: 'payload_format', label: 'Payload Format', type: 'select', required: false, options: [
+            { value: 'generic', label: 'Generic JSON' },
+            { value: 'slack', label: 'Slack / Mattermost' },
+          ]},
           { key: 'auth_header', label: 'Authorization', placeholder: 'Bearer token (optional)', type: 'password', required: false },
-          { key: 'field_title', label: 'Title Field Name', placeholder: 'title', type: 'text', required: false },
-          { key: 'field_message', label: 'Message Field Name', placeholder: 'message', type: 'text', required: false },
+          { key: 'field_title', label: 'Title Field Name', placeholder: 'title', type: 'text', required: false, showIf: (cfg: Record<string, string>) => cfg.payload_format !== 'slack' },
+          { key: 'field_message', label: 'Message Field Name', placeholder: 'message', type: 'text', required: false, showIf: (cfg: Record<string, string>) => cfg.payload_format !== 'slack' },
         ];
       default:
         return [];
@@ -290,12 +294,14 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
           {/* Provider-specific configuration */}
           <div className="space-y-3">
             <p className="text-sm text-bambu-gray">Configuration</p>
-            {configFields.map((field) => (
+            {configFields
+              .filter((field) => !('showIf' in field) || (field as { showIf?: (cfg: Record<string, string>) => boolean }).showIf?.(config) !== false)
+              .map((field) => (
               <div key={field.key}>
                 <label className="block text-sm text-bambu-gray mb-1">
                   {field.label} {field.required && '*'}
                 </label>
-                {field.type === 'select' && field.options ? (
+                {field.type === 'select' && 'options' in field && field.options ? (
                   <select
                     value={config[field.key] || field.options[0]?.value || ''}
                     onChange={(e) => {

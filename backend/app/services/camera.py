@@ -66,11 +66,24 @@ def supports_rtsp(model: str | None) -> bool:
 
     RTSP supported: X1, X1C, X1E, H2C, H2D, H2DPRO, H2S, P2S
     Chamber image only: A1, A1MINI, P1P, P1S
+
+    Note: Model can be either display name (e.g., "P2S") or internal code (e.g., "N7").
+    Internal codes from MQTT/SSDP:
+      - BL-P001: X1/X1C
+      - C13: X1E
+      - O1D: H2D
+      - O1C: H2C
+      - O1S: H2S
+      - O1E: H2D Pro
+      - N7: P2S
     """
     if model:
         model_upper = model.upper()
-        # These models support RTSP on port 322
+        # Display names: X1, X1C, X1E, H2C, H2D, H2DPRO, H2S, P2S
         if model_upper.startswith(("X1", "H2", "P2")):
+            return True
+        # Internal codes for RTSP models
+        if model_upper in ("BL-P001", "C13", "O1D", "O1C", "O1S", "O1E", "N7"):
             return True
     # A1/P1 and unknown models use chamber image protocol
     return False

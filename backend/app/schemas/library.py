@@ -235,3 +235,30 @@ class AddToQueueResponse(BaseModel):
 
     added: list[AddToQueueResult]
     errors: list[AddToQueueError]
+
+
+# ============ ZIP Extraction ============
+
+
+class ZipExtractResult(BaseModel):
+    """Result for a single file extracted from ZIP."""
+
+    filename: str
+    file_id: int
+    folder_id: int | None = None
+
+
+class ZipExtractError(BaseModel):
+    """Error for a file that couldn't be extracted."""
+
+    filename: str
+    error: str
+
+
+class ZipExtractResponse(BaseModel):
+    """Schema for ZIP extraction response."""
+
+    extracted: int
+    folders_created: int
+    files: list[ZipExtractResult]
+    errors: list[ZipExtractError]

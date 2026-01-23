@@ -38,6 +38,9 @@ from backend.app.schemas.library import (
     FolderResponse,
     FolderTreeItem,
     FolderUpdate,
+    ZipExtractError,
+    ZipExtractResponse,
+    ZipExtractResult,
 )
 from backend.app.services.archive import ArchiveService, ThreeMFParser
 
@@ -738,6 +741,226 @@ async def upload_file(
     except Exception as e:
         logger.error(f"Upload failed for {file.filename}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@router.post("/files/extract-zip", response_model=ZipExtractResponse)
+async def extract_zip_file(
+    file: UploadFile = File(...),
+    folder_id: int | None = None,
+    preserve_structure: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload and extract a ZIP file to the library.
+
+    Args:
+        file: The ZIP file to extract
+        folder_id: Target folder ID (None = root)
+        preserve_structure: If True, recreate folder structure from ZIP; if False, extract all files flat
+    """
+    import tempfile
+    import zipfile
+
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only ZIP files are supported")
+
+    # Verify target folder exists if specified
+    if folder_id is not None:
+        folder_result = await db.execute(select(LibraryFolder).where(LibraryFolder.id == folder_id))
+        if not folder_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Target folder not found")
+
+    # Save ZIP to temp file
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save ZIP file: {str(e)}")
+
+    extracted_files: list[ZipExtractResult] = []
+    errors: list[ZipExtractError] = []
+    folders_created = 0
+    folder_cache: dict[str, int] = {}  # path -> folder_id
+
+    try:
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            # Filter out directories and hidden/system files
+            file_list = [
+                name
+                for name in zf.namelist()
+                if not name.endswith("/")
+                and not name.startswith("__MACOSX")
+                and not os.path.basename(name).startswith(".")
+            ]
+
+            for zip_path in file_list:
+                try:
+                    # Determine target folder
+                    target_folder_id = folder_id
+
+                    if preserve_structure:
+                        # Get directory path from ZIP
+                        dir_path = os.path.dirname(zip_path)
+                        if dir_path:
+                            # Create folder structure
+                            parts = dir_path.split("/")
+                            current_parent = folder_id
+                            current_path = ""
+
+                            for part in parts:
+                                if not part:
+                                    continue
+                                current_path = f"{current_path}/{part}" if current_path else part
+
+                                if current_path in folder_cache:
+                                    current_parent = folder_cache[current_path]
+                                else:
+                                    # Check if folder exists
+                                    existing = await db.execute(
+                                        select(LibraryFolder).where(
+                                            LibraryFolder.name == part,
+                                            LibraryFolder.parent_id == current_parent
+                                            if current_parent
+                                            else LibraryFolder.parent_id.is_(None),
+                                        )
+                                    )
+                                    existing_folder = existing.scalar_one_or_none()
+
+                                    if existing_folder:
+                                        current_parent = existing_folder.id
+                                    else:
+                                        # Create folder
+                                        new_folder = LibraryFolder(name=part, parent_id=current_parent)
+                                        db.add(new_folder)
+                                        await db.flush()
+                                        current_parent = new_folder.id
+                                        folders_created += 1
+
+                                    folder_cache[current_path] = current_parent
+
+                            target_folder_id = current_parent
+
+                    # Extract file
+                    filename = os.path.basename(zip_path)
+                    ext = os.path.splitext(filename)[1].lower()
+                    file_type = ext[1:] if ext else "unknown"
+
+                    # Generate unique filename for storage
+                    unique_filename = f"{uuid.uuid4().hex}{ext}"
+                    file_path = get_library_files_dir() / unique_filename
+
+                    # Extract and save file
+                    file_content = zf.read(zip_path)
+                    with open(file_path, "wb") as f:
+                        f.write(file_content)
+
+                    # Calculate hash
+                    file_hash = calculate_file_hash(file_path)
+
+                    # Extract metadata and thumbnail for 3MF files
+                    metadata = {}
+                    thumbnail_path = None
+                    thumbnails_dir = get_library_thumbnails_dir()
+
+                    if ext == ".3mf":
+                        try:
+                            parser = ThreeMFParser(str(file_path))
+                            raw_metadata = parser.parse()
+
+                            thumbnail_data = raw_metadata.get("_thumbnail_data")
+                            thumbnail_ext = raw_metadata.get("_thumbnail_ext", ".png")
+
+                            if thumbnail_data:
+                                thumb_filename = f"{uuid.uuid4().hex}{thumbnail_ext}"
+                                thumb_path = thumbnails_dir / thumb_filename
+                                with open(thumb_path, "wb") as f:
+                                    f.write(thumbnail_data)
+                                thumbnail_path = str(thumb_path)
+
+                            def clean_metadata(obj):
+                                if isinstance(obj, dict):
+                                    return {
+                                        k: clean_metadata(v)
+                                        for k, v in obj.items()
+                                        if not isinstance(v, bytes) and k not in ("_thumbnail_data", "_thumbnail_ext")
+                                    }
+                                elif isinstance(obj, list):
+                                    return [clean_metadata(i) for i in obj if not isinstance(i, bytes)]
+                                elif isinstance(obj, bytes):
+                                    return None
+                                return obj
+
+                            metadata = clean_metadata(raw_metadata)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse 3MF from ZIP: {e}")
+
+                    elif ext == ".gcode":
+                        try:
+                            thumbnail_data = extract_gcode_thumbnail(file_path)
+                            if thumbnail_data:
+                                thumb_filename = f"{uuid.uuid4().hex}.png"
+                                thumb_path = thumbnails_dir / thumb_filename
+                                with open(thumb_path, "wb") as f:
+                                    f.write(thumbnail_data)
+                                thumbnail_path = str(thumb_path)
+                        except Exception as e:
+                            logger.warning(f"Failed to extract gcode thumbnail from ZIP: {e}")
+
+                    elif ext.lower() in IMAGE_EXTENSIONS:
+                        thumbnail_path = create_image_thumbnail(file_path, thumbnails_dir)
+
+                    # Create database entry
+                    library_file = LibraryFile(
+                        folder_id=target_folder_id,
+                        filename=filename,
+                        file_path=str(file_path),
+                        file_type=file_type,
+                        file_size=len(file_content),
+                        file_hash=file_hash,
+                        thumbnail_path=thumbnail_path,
+                        file_metadata=metadata if metadata else None,
+                    )
+                    db.add(library_file)
+                    await db.flush()
+                    await db.refresh(library_file)
+
+                    extracted_files.append(
+                        ZipExtractResult(
+                            filename=filename,
+                            file_id=library_file.id,
+                            folder_id=target_folder_id,
+                        )
+                    )
+
+                    # Commit after each file to release database lock
+                    # This prevents long-running transactions from blocking other requests
+                    await db.commit()
+
+                except Exception as e:
+                    logger.error(f"Failed to extract {zip_path}: {e}")
+                    errors.append(ZipExtractError(filename=os.path.basename(zip_path), error=str(e)))
+                    # Rollback the failed file but continue with others
+                    await db.rollback()
+
+        return ZipExtractResponse(
+            extracted=len(extracted_files),
+            folders_created=folders_created,
+            files=extracted_files,
+            errors=errors,
+        )
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
+    except Exception as e:
+        logger.error(f"ZIP extraction failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"ZIP extraction failed: {str(e)}")
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 # ============ Queue Operations ============

@@ -122,4 +122,46 @@ describe('ConfirmModal', () => {
       expect(screen.getByText('Confirm Action')).toBeInTheDocument();
     });
   });
+
+  describe('loading state', () => {
+    it('shows loading text when isLoading is true', () => {
+      render(<ConfirmModal {...defaultProps} isLoading={true} loadingText="Deleting..." />);
+      expect(screen.getByText('Deleting...')).toBeInTheDocument();
+    });
+
+    it('shows default loading text when loadingText not provided', () => {
+      render(<ConfirmModal {...defaultProps} isLoading={true} />);
+      expect(screen.getByText('Processing...')).toBeInTheDocument();
+    });
+
+    it('disables buttons when loading', () => {
+      render(<ConfirmModal {...defaultProps} isLoading={true} />);
+      const buttons = screen.getAllByRole('button');
+      buttons.forEach(button => {
+        expect(button).toBeDisabled();
+      });
+    });
+
+    it('does not call onCancel when clicking backdrop while loading', async () => {
+      const user = userEvent.setup();
+      const onCancel = vi.fn();
+      const { container } = render(
+        <ConfirmModal {...defaultProps} onCancel={onCancel} isLoading={true} />
+      );
+
+      const backdrop = container.querySelector('.fixed');
+      if (backdrop) {
+        await user.click(backdrop);
+        expect(onCancel).not.toHaveBeenCalled();
+      }
+    });
+
+    it('does not call onCancel on Escape key while loading', () => {
+      const onCancel = vi.fn();
+      render(<ConfirmModal {...defaultProps} onCancel={onCancel} isLoading={true} />);
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+  });
 });

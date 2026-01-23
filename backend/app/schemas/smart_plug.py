@@ -15,6 +15,10 @@ class SmartPlugBase(BaseModel):
 
     # Home Assistant fields (required when plug_type="homeassistant")
     ha_entity_id: str | None = Field(default=None, pattern=r"^(switch|light|input_boolean)\.[a-z0-9_]+$")
+    # Home Assistant energy sensor entities (optional, for separate energy sensors)
+    ha_power_entity: str | None = Field(default=None, pattern=r"^sensor\.[a-z0-9_]+$")
+    ha_energy_today_entity: str | None = Field(default=None, pattern=r"^sensor\.[a-z0-9_]+$")
+    ha_energy_total_entity: str | None = Field(default=None, pattern=r"^sensor\.[a-z0-9_]+$")
 
     printer_id: int | None = None
     enabled: bool = True
@@ -52,6 +56,10 @@ class SmartPlugUpdate(BaseModel):
     plug_type: Literal["tasmota", "homeassistant"] | None = None
     ip_address: str | None = None
     ha_entity_id: str | None = None
+    # Home Assistant energy sensor entities (optional)
+    ha_power_entity: str | None = None
+    ha_energy_today_entity: str | None = None
+    ha_energy_total_entity: str | None = None
     printer_id: int | None = None
     enabled: bool | None = None
     auto_on: bool | None = None
@@ -140,3 +148,12 @@ class HAEntity(BaseModel):
     friendly_name: str
     state: str | None = None
     domain: str  # "switch", "light", "input_boolean"
+
+
+class HASensorEntity(BaseModel):
+    """A Home Assistant sensor entity for energy monitoring."""
+
+    entity_id: str
+    friendly_name: str
+    state: str | None = None
+    unit_of_measurement: str | None = None  # "W", "kW", "kWh", "Wh"

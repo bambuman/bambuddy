@@ -25,6 +25,7 @@ from backend.app.models.project import Project
 from backend.app.models.project_bom import ProjectBOMItem
 from backend.app.models.settings import Settings
 from backend.app.models.smart_plug import SmartPlug
+from backend.app.models.user import User
 from backend.app.schemas.settings import AppSettings, AppSettingsUpdate
 from backend.app.services.printer_manager import printer_manager
 from backend.app.services.spoolman import init_spoolman_client
@@ -242,6 +243,9 @@ async def export_backup(
     include_pending_uploads: bool = Query(False, description="Include pending virtual printer uploads"),
     include_access_codes: bool = Query(False, description="Include printer access codes (security risk!)"),
     include_api_keys: bool = Query(False, description="Include API keys (keys will need to be regenerated on import)"),
+    include_users: bool = Query(
+        False, description="Include users (passwords not exported - users will need new passwords)"
+    ),
 ):
     """Export selected data as JSON backup."""
     backup: dict = {
@@ -338,6 +342,9 @@ async def export_backup(
                     "plug_type": plug.plug_type,
                     "ip_address": plug.ip_address,
                     "ha_entity_id": plug.ha_entity_id,
+                    "ha_power_entity": plug.ha_power_entity,
+                    "ha_energy_today_entity": plug.ha_energy_today_entity,
+                    "ha_energy_total_entity": plug.ha_energy_total_entity,
                     "printer_serial": printer_id_to_serial.get(plug.printer_id) if plug.printer_id else None,
                     "enabled": plug.enabled,
                     "auto_on": plug.auto_on,
@@ -776,6 +783,22 @@ async def export_backup(
             )
         backup["included"].append("api_keys")
 
+    # Users (note: passwords not exported for security - users will need new passwords on import)
+    if include_users:
+        result = await db.execute(select(User))
+        users = result.scalars().all()
+        backup["users"] = []
+        for user in users:
+            backup["users"].append(
+                {
+                    "username": user.username,
+                    "role": user.role,
+                    "is_active": user.is_active,
+                    # password_hash intentionally not exported for security
+                }
+            )
+        backup["included"].append("users")
+
     # If there are files to include (icons or archives), create ZIP file
     if backup_files:
         zip_buffer = io.BytesIO()
@@ -866,6 +889,7 @@ async def import_backup(
         "maintenance_types": 0,
         "projects": 0,
         "pending_uploads": 0,
+        "users": 0,
     }
     skipped = {
         "settings": 0,
@@ -879,6 +903,7 @@ async def import_backup(
         "archives": 0,
         "projects": 0,
         "pending_uploads": 0,
+        "users": 0,
     }
     skipped_details = {
         "notification_providers": [],
@@ -890,6 +915,7 @@ async def import_backup(
         "archives": [],
         "projects": [],
         "pending_uploads": [],
+        "users": [],
     }
 
     # Restore settings (always overwrites)
@@ -1099,6 +1125,9 @@ async def import_backup(
                     existing.name = plug_data["name"]
                     existing.plug_type = plug_type
                     existing.ha_entity_id = plug_data.get("ha_entity_id")
+                    existing.ha_power_entity = plug_data.get("ha_power_entity")
+                    existing.ha_energy_today_entity = plug_data.get("ha_energy_today_entity")
+                    existing.ha_energy_total_entity = plug_data.get("ha_energy_total_entity")
                     existing.printer_id = printer_id
                     existing.enabled = plug_data.get("enabled", True)
                     existing.auto_on = plug_data.get("auto_on", True)
@@ -1125,6 +1154,9 @@ async def import_backup(
                     plug_type=plug_type,
                     ip_address=plug_data.get("ip_address"),
                     ha_entity_id=plug_data.get("ha_entity_id"),
+                    ha_power_entity=plug_data.get("ha_power_entity"),
+                    ha_energy_today_entity=plug_data.get("ha_energy_today_entity"),
+                    ha_energy_total_entity=plug_data.get("ha_energy_total_entity"),
                     printer_id=printer_id,
                     enabled=plug_data.get("enabled", True),
                     auto_on=plug_data.get("auto_on", True),
@@ -1772,6 +1804,40 @@ async def import_backup(
                     }
                 )
 
+    # Restore users (note: passwords not included in backup - users will need new passwords)
+    # Users are skipped by default since they have no passwords; admin must recreate them
+    new_users: list[str] = []
+    if "users" in backup:
+        from backend.app.core.auth import get_password_hash
+
+        for user_data in backup["users"]:
+            result = await db.execute(select(User).where(User.username == user_data["username"]))
+            existing = result.scalar_one_or_none()
+            if existing:
+                if overwrite:
+                    existing.role = user_data.get("role", "user")
+                    existing.is_active = user_data.get("is_active", True)
+                    # Don't change password - keep existing
+                    restored["users"] += 1
+                else:
+                    skipped["users"] += 1
+                    skipped_details["users"].append(user_data["username"])
+            else:
+                # Create user with a temporary password that must be changed
+                # Generate a random temporary password
+                import secrets
+
+                temp_password = secrets.token_urlsafe(16)
+                user = User(
+                    username=user_data["username"],
+                    password_hash=get_password_hash(temp_password),
+                    role=user_data.get("role", "user"),
+                    is_active=user_data.get("is_active", True),
+                )
+                db.add(user)
+                restored["users"] += 1
+                new_users.append(f"{user_data['username']} (temp password: {temp_password})")
+
     await db.commit()
 
     # If printers were in the backup (restored, updated, or skipped), reconnect all active printers
@@ -1881,6 +1947,10 @@ async def import_backup(
     # Include newly generated API keys if any (so user can see them)
     if new_api_keys:
         response["new_api_keys"] = new_api_keys
+
+    # Include newly created users with temp passwords (so admin can share them)
+    if new_users:
+        response["new_users"] = new_users
 
     return response
 

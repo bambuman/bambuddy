@@ -839,6 +839,34 @@ class TestSupportsChamberTemp:
         assert supports_chamber_temp("X1c") is True
         assert supports_chamber_temp("p1s") is False
 
+    def test_internal_model_codes_supported(self):
+        """Verify internal model codes from MQTT/SSDP are recognized."""
+        # X1/X1C
+        assert supports_chamber_temp("BL-P001") is True
+        # X1E
+        assert supports_chamber_temp("C13") is True
+        # H2D
+        assert supports_chamber_temp("O1D") is True
+        # H2C
+        assert supports_chamber_temp("O1C") is True
+        # H2S
+        assert supports_chamber_temp("O1S") is True
+        # H2D Pro
+        assert supports_chamber_temp("O1E") is True
+        # P2S
+        assert supports_chamber_temp("N7") is True
+
+    def test_internal_model_codes_not_supported(self):
+        """Verify A1/P1 internal codes are NOT supported."""
+        # P1P
+        assert supports_chamber_temp("C11") is False
+        # P1S
+        assert supports_chamber_temp("C12") is False
+        # A1
+        assert supports_chamber_temp("N2S") is False
+        # A1 Mini
+        assert supports_chamber_temp("N1") is False
+
 
 class TestGetDerivedStatusName:
     """Tests for get_derived_status_name function."""

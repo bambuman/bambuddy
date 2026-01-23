@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { RefreshCw, AlertTriangle, Camera, Maximize, Minimize, WifiOff } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Camera, Maximize, Minimize, WifiOff, ZoomIn, ZoomOut } from 'lucide-react';
 import { api } from '../api/client';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -22,6 +22,10 @@ export function CameraPage() {
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [reconnectCountdown, setReconnectCountdown] = useState(0);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -98,6 +102,9 @@ export function CameraPage() {
     const handleFullscreenChange = () => {
       const nowFullscreen = !!document.fullscreenElement;
       setIsFullscreen(nowFullscreen);
+      // Reset zoom on fullscreen transition
+      setZoomLevel(1);
+      setPanOffset({ x: 0, y: 0 });
 
       // Refresh stream after fullscreen transition to prevent stall
       if (streamMode === 'stream' && !transitioning) {
@@ -307,6 +314,9 @@ export function CameraPage() {
     // Reset reconnect state on mode switch
     setReconnectAttempts(0);
     setIsReconnecting(false);
+    // Reset zoom on mode switch
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
     }
@@ -367,6 +377,57 @@ export function CameraPage() {
     } else {
       containerRef.current.requestFullscreen();
     }
+  };
+
+  const handleZoomIn = () => {
+    setZoomLevel(prev => Math.min(prev + 0.5, 4));
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel(prev => {
+      const newZoom = Math.max(prev - 0.5, 1);
+      if (newZoom === 1) setPanOffset({ x: 0, y: 0 });
+      return newZoom;
+    });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    if (e.deltaY < 0) {
+      handleZoomIn();
+    } else {
+      handleZoomOut();
+    }
+  };
+
+  const handleImageMouseDown = (e: React.MouseEvent) => {
+    if (zoomLevel > 1) {
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
+    }
+  };
+
+  const handleImageMouseMove = (e: React.MouseEvent) => {
+    if (isPanning && zoomLevel > 1) {
+      const newX = e.clientX - panStart.x;
+      const newY = e.clientY - panStart.y;
+      // Limit panning based on zoom level
+      const maxPan = (zoomLevel - 1) * 200;
+      setPanOffset({
+        x: Math.max(-maxPan, Math.min(maxPan, newX)),
+        y: Math.max(-maxPan, Math.min(maxPan, newY)),
+      });
+    }
+  };
+
+  const handleImageMouseUp = () => {
+    setIsPanning(false);
+  };
+
+  const resetZoom = () => {
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
   };
 
   const currentUrl = transitioning
@@ -442,7 +503,13 @@ export function CameraPage() {
       </div>
 
       {/* Video area */}
-      <div className="flex-1 flex items-center justify-center p-2">
+      <div
+        className="flex-1 flex items-center justify-center p-2 overflow-hidden"
+        onWheel={handleWheel}
+        onMouseMove={handleImageMouseMove}
+        onMouseUp={handleImageMouseUp}
+        onMouseLeave={handleImageMouseUp}
+      >
         <div className="relative w-full h-full flex items-center justify-center">
           {(streamLoading || transitioning) && !isReconnecting && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
@@ -493,10 +560,43 @@ export function CameraPage() {
             key={imageKey}
             src={currentUrl}
             alt="Camera stream"
-            className="max-w-full max-h-full object-contain"
+            className="max-w-full max-h-full object-contain select-none"
+            style={{
+              transform: `scale(${zoomLevel}) translate(${panOffset.x / zoomLevel}px, ${panOffset.y / zoomLevel}px)`,
+              cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
+            }}
             onError={currentUrl ? handleStreamError : undefined}
             onLoad={currentUrl ? handleStreamLoad : undefined}
+            onMouseDown={handleImageMouseDown}
+            draggable={false}
           />
+
+          {/* Zoom controls */}
+          <div className="absolute bottom-4 left-4 flex items-center gap-1.5 bg-black/60 rounded-lg px-2 py-1.5">
+            <button
+              onClick={handleZoomOut}
+              disabled={zoomLevel <= 1}
+              className="p-1.5 hover:bg-white/10 rounded disabled:opacity-30"
+              title="Zoom out"
+            >
+              <ZoomOut className="w-4 h-4 text-white" />
+            </button>
+            <button
+              onClick={resetZoom}
+              className="px-2 py-1 text-sm text-white hover:bg-white/10 rounded min-w-[48px]"
+              title="Reset zoom"
+            >
+              {Math.round(zoomLevel * 100)}%
+            </button>
+            <button
+              onClick={handleZoomIn}
+              disabled={zoomLevel >= 4}
+              className="p-1.5 hover:bg-white/10 rounded disabled:opacity-30"
+              title="Zoom in"
+            >
+              <ZoomIn className="w-4 h-4 text-white" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

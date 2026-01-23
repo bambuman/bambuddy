@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import { Card, CardContent } from './Card';
 import { Button } from './Button';
 
@@ -9,6 +9,8 @@ interface ConfirmModalProps {
   confirmText?: string;
   cancelText?: string;
   variant?: 'danger' | 'warning' | 'default';
+  isLoading?: boolean;
+  loadingText?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -19,17 +21,19 @@ export function ConfirmModal({
   confirmText = 'Confirm',
   cancelText = 'Cancel',
   variant = 'default',
+  isLoading = false,
+  loadingText,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
-  // Close on Escape key
+  // Close on Escape key (but not while loading)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Escape' && !isLoading) onCancel();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onCancel]);
+  }, [onCancel, isLoading]);
 
   const variantStyles = {
     danger: {
@@ -51,7 +55,7 @@ export function ConfirmModal({
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={onCancel}
+      onClick={isLoading ? undefined : onCancel}
     >
       <Card className="w-full max-w-md" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
         <CardContent className="p-6">
@@ -65,14 +69,22 @@ export function ConfirmModal({
             </div>
           </div>
           <div className="flex gap-3 mt-6">
-            <Button variant="secondary" onClick={onCancel} className="flex-1">
+            <Button variant="secondary" onClick={onCancel} className="flex-1" disabled={isLoading}>
               {cancelText}
             </Button>
             <Button
               onClick={onConfirm}
               className={`flex-1 ${styles.button}`}
+              disabled={isLoading}
             >
-              {confirmText}
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {loadingText || 'Processing...'}
+                </>
+              ) : (
+                confirmText
+              )}
             </Button>
           </div>
         </CardContent>

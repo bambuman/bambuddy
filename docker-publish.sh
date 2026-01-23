@@ -75,9 +75,9 @@ fi
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
-# Check if logged in to registry
-if ! docker info 2>/dev/null | grep -q "Username"; then
-    echo -e "${YELLOW}Warning: You may not be logged in to Docker registry${NC}"
+# Check if logged in to ghcr.io
+if ! grep -q "ghcr.io" ~/.docker/config.json 2>/dev/null; then
+    echo -e "${YELLOW}Warning: You may not be logged in to ghcr.io${NC}"
     echo "Run: echo \$GITHUB_TOKEN | docker login ghcr.io -u YOUR_USERNAME --password-stdin"
     echo ""
 fi

@@ -19,6 +19,10 @@ class SmartPlug(Base):
     plug_type: Mapped[str] = mapped_column(String(20), default="tasmota")
     # Home Assistant entity ID (e.g., "switch.printer_plug")
     ha_entity_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Home Assistant energy sensor entities (optional, for separate energy sensors)
+    ha_power_entity: Mapped[str | None] = mapped_column(String(100), nullable=True)  # sensor.xxx_power
+    ha_energy_today_entity: Mapped[str | None] = mapped_column(String(100), nullable=True)  # sensor.xxx_today
+    ha_energy_total_entity: Mapped[str | None] = mapped_column(String(100), nullable=True)  # sensor.xxx_total
 
     # Link to printer (1:1)
     printer_id: Mapped[int | None] = mapped_column(

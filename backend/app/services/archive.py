@@ -844,8 +844,11 @@ class ArchiveService:
             if filament:
                 cost = round((filament_grams / 1000) * filament.cost_per_kg, 2)
             else:
-                # Default cost_per_kg if filament type not found
-                default_cost_per_kg = 25.0
+                # Use default filament cost from settings
+                from backend.app.api.routes.settings import get_setting
+
+                default_cost_setting = await get_setting(self.db, "default_filament_cost")
+                default_cost_per_kg = float(default_cost_setting) if default_cost_setting else 25.0
                 cost = round((filament_grams / 1000) * default_cost_per_kg, 2)
 
         # Calculate quantity from printable objects count

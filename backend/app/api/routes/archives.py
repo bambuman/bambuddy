@@ -425,9 +425,23 @@ async def get_archive_stats(db: AsyncSession = Depends(get_db)):
     failed_result = await db.execute(select(func.count(PrintArchive.id)).where(PrintArchive.status == "failed"))
     failed_prints = failed_result.scalar() or 0
 
-    # Totals
-    time_result = await db.execute(select(func.sum(PrintArchive.print_time_seconds)))
-    total_time = (time_result.scalar() or 0) / 3600  # Convert to hours
+    # Totals - use actual print time from timestamps (not slicer estimates)
+    # For archives with both started_at and completed_at, calculate actual duration
+    # Fall back to print_time_seconds only for archives without timestamps
+    archives_for_time = await db.execute(
+        select(PrintArchive.started_at, PrintArchive.completed_at, PrintArchive.print_time_seconds)
+    )
+    total_seconds = 0
+    for started_at, completed_at, print_time_seconds in archives_for_time.all():
+        if started_at and completed_at:
+            # Use actual elapsed time
+            actual_seconds = (completed_at - started_at).total_seconds()
+            if actual_seconds > 0:
+                total_seconds += actual_seconds
+        elif print_time_seconds:
+            # Fallback to estimate only if no timestamps
+            total_seconds += print_time_seconds
+    total_time = total_seconds / 3600  # Convert to hours
 
     filament_result = await db.execute(select(func.sum(PrintArchive.filament_used_grams)))
     total_filament = filament_result.scalar() or 0
@@ -627,6 +641,7 @@ async def toggle_favorite(
 @router.post("/{archive_id}/rescan", response_model=ArchiveResponse)
 async def rescan_archive(archive_id: int, db: AsyncSession = Depends(get_db)):
     """Rescan the 3MF file and update metadata."""
+    from backend.app.api.routes.settings import get_setting
     from backend.app.services.archive import ThreeMFParser
 
     result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
@@ -672,7 +687,10 @@ async def rescan_archive(archive_id: int, db: AsyncSession = Depends(get_db)):
         if filament:
             archive.cost = round((archive.filament_used_grams / 1000) * filament.cost_per_kg, 2)
         else:
-            archive.cost = round((archive.filament_used_grams / 1000) * 25.0, 2)
+            # Use default filament cost from settings
+            default_cost_setting = await get_setting(db, "default_filament_cost")
+            default_cost_per_kg = float(default_cost_setting) if default_cost_setting else 25.0
+            archive.cost = round((archive.filament_used_grams / 1000) * default_cost_per_kg, 2)
 
     await db.commit()
     await db.refresh(archive)
@@ -682,13 +700,18 @@ async def rescan_archive(archive_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/recalculate-costs")
 async def recalculate_all_costs(db: AsyncSession = Depends(get_db)):
     """Recalculate costs for all archives based on filament usage and prices."""
+    from backend.app.api.routes.settings import get_setting
+
     result = await db.execute(select(PrintArchive))
     archives = list(result.scalars().all())
 
     # Load all filaments for lookup
     filament_result = await db.execute(select(Filament))
     filaments = {f.type: f.cost_per_kg for f in filament_result.scalars().all()}
-    default_cost_per_kg = 25.0
+
+    # Get default filament cost from settings
+    default_cost_setting = await get_setting(db, "default_filament_cost")
+    default_cost_per_kg = float(default_cost_setting) if default_cost_setting else 25.0
 
     updated = 0
     for archive in archives:

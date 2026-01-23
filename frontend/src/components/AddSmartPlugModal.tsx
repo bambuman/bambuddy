@@ -24,6 +24,28 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
   const [password, setPassword] = useState(plug?.password || '');
   // Home Assistant fields
   const [haEntityId, setHaEntityId] = useState(plug?.ha_entity_id || '');
+  // HA energy sensor entities (optional)
+  const [haPowerEntity, setHaPowerEntity] = useState(plug?.ha_power_entity || '');
+  const [haEnergyTodayEntity, setHaEnergyTodayEntity] = useState(plug?.ha_energy_today_entity || '');
+  const [haEnergyTotalEntity, setHaEnergyTotalEntity] = useState(plug?.ha_energy_total_entity || '');
+  // HA entity search
+  const [haEntitySearch, setHaEntitySearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [isEntityDropdownOpen, setIsEntityDropdownOpen] = useState(false);
+  const entityDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Energy sensor search states
+  const [powerSensorSearch, setPowerSensorSearch] = useState('');
+  const [isPowerDropdownOpen, setIsPowerDropdownOpen] = useState(false);
+  const powerDropdownRef = useRef<HTMLDivElement>(null);
+
+  const [energyTodaySearch, setEnergyTodaySearch] = useState('');
+  const [isEnergyTodayDropdownOpen, setIsEnergyTodayDropdownOpen] = useState(false);
+  const energyTodayDropdownRef = useRef<HTMLDivElement>(null);
+
+  const [energyTotalSearch, setEnergyTotalSearch] = useState('');
+  const [isEnergyTotalDropdownOpen, setIsEnergyTotalDropdownOpen] = useState(false);
+  const energyTotalDropdownRef = useRef<HTMLDivElement>(null);
 
   const [printerId, setPrinterId] = useState<number | null>(plug?.printer_id || null);
   const [testResult, setTestResult] = useState<{ success: boolean; state?: string | null; device_name?: string | null } | null>(null);
@@ -69,10 +91,47 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
   // Check if HA is properly configured
   const haConfigured = !!(settings?.ha_enabled && settings?.ha_url && settings?.ha_token);
 
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(haEntitySearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [haEntitySearch]);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (entityDropdownRef.current && !entityDropdownRef.current.contains(e.target as Node)) {
+        setIsEntityDropdownOpen(false);
+      }
+      if (powerDropdownRef.current && !powerDropdownRef.current.contains(e.target as Node)) {
+        setIsPowerDropdownOpen(false);
+      }
+      if (energyTodayDropdownRef.current && !energyTodayDropdownRef.current.contains(e.target as Node)) {
+        setIsEnergyTodayDropdownOpen(false);
+      }
+      if (energyTotalDropdownRef.current && !energyTotalDropdownRef.current.contains(e.target as Node)) {
+        setIsEnergyTotalDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // Fetch Home Assistant entities when in HA mode AND HA is configured
-  const { data: haEntities, isLoading: haEntitiesLoading } = useQuery({
-    queryKey: ['ha-entities'],
-    queryFn: api.getHAEntities,
+  const { data: haEntities, isLoading: haEntitiesLoading, error: haEntitiesError } = useQuery({
+    queryKey: ['ha-entities', debouncedSearch],
+    queryFn: () => api.getHAEntities(debouncedSearch || undefined),
+    enabled: plugType === 'homeassistant' && haConfigured,
+    retry: false,
+    staleTime: 0,
+  });
+
+  // Fetch Home Assistant sensor entities for energy monitoring
+  const { data: haSensorEntities } = useQuery({
+    queryKey: ['ha-sensor-entities'],
+    queryFn: api.getHASensorEntities,
     enabled: plugType === 'homeassistant' && haConfigured,
     retry: false,
     staleTime: 0,
@@ -225,6 +284,10 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
       plug_type: plugType,
       ip_address: plugType === 'tasmota' ? ipAddress.trim() : null,
       ha_entity_id: plugType === 'homeassistant' ? haEntityId : null,
+      // HA energy sensor entities (optional)
+      ha_power_entity: plugType === 'homeassistant' ? (haPowerEntity || null) : null,
+      ha_energy_today_entity: plugType === 'homeassistant' ? (haEnergyTodayEntity || null) : null,
+      ha_energy_total_entity: plugType === 'homeassistant' ? (haEnergyTotalEntity || null) : null,
       username: plugType === 'tasmota' ? (username.trim() || null) : null,
       password: plugType === 'tasmota' ? (password.trim() || null) : null,
       printer_id: printerId,
@@ -422,59 +485,371 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
                     </div>
                   )}
 
-                  {haEntities && haEntities.length === 0 && (
-                    <div className="p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-lg text-sm text-yellow-400">
-                      No switch/light entities found in Home Assistant
+                  {haEntitiesError && (
+                    <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-sm text-red-400">
+                      Failed to load entities: {(haEntitiesError as Error).message}
                     </div>
                   )}
 
-                  {haEntities && haEntities.length > 0 && (() => {
+                  {/* Searchable Entity Dropdown */}
+                  {(() => {
                     // Filter out entities already configured (except current plug when editing)
                     const configuredEntityIds = existingPlugs
                       ?.filter(p => p.ha_entity_id && p.id !== plug?.id)
                       .map(p => p.ha_entity_id) || [];
-                    const availableEntities = haEntities.filter(e => !configuredEntityIds.includes(e.entity_id));
+                    const availableEntities = (haEntities || []).filter(e => !configuredEntityIds.includes(e.entity_id));
+                    const selectedEntity = haEntities?.find(e => e.entity_id === haEntityId);
 
                     return (
-                      <div>
+                      <div ref={entityDropdownRef} className="relative">
                         <label className="block text-sm text-bambu-gray mb-1">Select Entity *</label>
-                        <select
-                          value={haEntityId}
-                          onChange={(e) => {
-                            setHaEntityId(e.target.value);
-                            // Auto-fill name from entity friendly name
-                            const entity = haEntities?.find(ent => ent.entity_id === e.target.value);
-                            if (entity && !name) {
-                              setName(entity.friendly_name);
-                            }
-                          }}
-                          className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                        >
-                          <option value="">Choose an entity...</option>
-                          {availableEntities.map((entity) => (
-                            <option key={entity.entity_id} value={entity.entity_id}>
-                              {entity.friendly_name} ({entity.entity_id}) - {entity.state}
-                            </option>
-                          ))}
-                        </select>
-                        {configuredEntityIds.length > 0 && (
-                          <p className="text-xs text-bambu-gray mt-1">
-                            {configuredEntityIds.length} entity(s) already configured
-                          </p>
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
+                          <input
+                            type="text"
+                            value={isEntityDropdownOpen ? haEntitySearch : (selectedEntity ? `${selectedEntity.friendly_name} (${selectedEntity.entity_id})` : '')}
+                            onChange={(e) => {
+                              setHaEntitySearch(e.target.value);
+                              if (!isEntityDropdownOpen) setIsEntityDropdownOpen(true);
+                            }}
+                            onFocus={() => {
+                              setIsEntityDropdownOpen(true);
+                              setHaEntitySearch('');
+                            }}
+                            placeholder="Search entities..."
+                            className="w-full pl-9 pr-8 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:border-bambu-green focus:outline-none"
+                          />
+                          {haEntityId && !isEntityDropdownOpen && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setHaEntityId('');
+                                setHaEntitySearch('');
+                              }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-bambu-dark-tertiary rounded"
+                            >
+                              <X className="w-4 h-4 text-bambu-gray hover:text-white" />
+                            </button>
+                          )}
+                          {haEntitiesLoading && (
+                            <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray animate-spin" />
+                          )}
+                        </div>
+
+                        {/* Dropdown */}
+                        {isEntityDropdownOpen && (
+                          <div className="absolute z-50 w-full mt-1 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            {haEntitiesLoading && (
+                              <div className="px-3 py-2 text-sm text-bambu-gray flex items-center gap-2">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Loading...
+                              </div>
+                            )}
+                            {!haEntitiesLoading && availableEntities.length === 0 && (
+                              <div className="px-3 py-2 text-sm text-bambu-gray">
+                                {debouncedSearch
+                                  ? `No entities found matching "${debouncedSearch}"`
+                                  : 'No entities available'}
+                              </div>
+                            )}
+                            {!haEntitiesLoading && availableEntities.map((entity) => (
+                              <button
+                                key={entity.entity_id}
+                                type="button"
+                                onClick={() => {
+                                  setHaEntityId(entity.entity_id);
+                                  setIsEntityDropdownOpen(false);
+                                  setHaEntitySearch('');
+                                  // Auto-fill name
+                                  if (!name) {
+                                    setName(entity.friendly_name);
+                                  }
+                                }}
+                                className={`w-full px-3 py-2 text-left text-sm hover:bg-bambu-dark-tertiary transition-colors ${
+                                  entity.entity_id === haEntityId ? 'bg-bambu-green/20 text-bambu-green' : 'text-white'
+                                }`}
+                              >
+                                <div className="font-medium">{entity.friendly_name}</div>
+                                <div className="text-xs text-bambu-gray flex items-center justify-between">
+                                  <span>{entity.entity_id}</span>
+                                  <span className={entity.state === 'on' ? 'text-bambu-green' : ''}>{entity.state}</span>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
                         )}
+
+                        <p className="text-xs text-bambu-gray mt-1">
+                          {debouncedSearch
+                            ? `Searching all entities (${availableEntities.length} found)`
+                            : `Showing switch, light, input_boolean (${availableEntities.length} available)`}
+                        </p>
                       </div>
                     );
                   })()}
 
-                  {haEntityId && haEntities && (
-                    <div className="p-3 bg-bambu-green/20 border border-bambu-green/50 rounded-lg text-sm text-bambu-green flex items-center gap-2">
-                      <CheckCircle className="w-5 h-5" />
+
+                  {/* Energy Monitoring Section (Optional) */}
+                  {haEntityId && haSensorEntities && haSensorEntities.length > 0 && (
+                    <div className="border-t border-bambu-dark-tertiary pt-4 mt-4 space-y-3">
                       <div>
-                        <p className="font-medium">Entity selected</p>
-                        <p className="text-xs opacity-80">
-                          {haEntities.find(e => e.entity_id === haEntityId)?.friendly_name} - {haEntities.find(e => e.entity_id === haEntityId)?.state}
+                        <p className="text-white font-medium mb-1">Energy Monitoring (Optional)</p>
+                        <p className="text-xs text-bambu-gray mb-3">
+                          Search and select sensors that provide power/energy data.
                         </p>
                       </div>
+
+                      {/* Power Sensor (W) */}
+                      {(() => {
+                        const powerSensors = haSensorEntities.filter(s =>
+                          s.unit_of_measurement === 'W' || s.unit_of_measurement === 'kW' || s.unit_of_measurement === 'mW'
+                        );
+                        const filteredPowerSensors = powerSensorSearch
+                          ? powerSensors.filter(s =>
+                              s.entity_id.toLowerCase().includes(powerSensorSearch.toLowerCase()) ||
+                              s.friendly_name.toLowerCase().includes(powerSensorSearch.toLowerCase())
+                            )
+                          : powerSensors;
+                        const selectedPowerSensor = haSensorEntities.find(s => s.entity_id === haPowerEntity);
+
+                        return (
+                          <div ref={powerDropdownRef} className="relative">
+                            <label className="block text-sm text-bambu-gray mb-1">Power Sensor (W)</label>
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
+                              <input
+                                type="text"
+                                value={isPowerDropdownOpen ? powerSensorSearch : (selectedPowerSensor ? `${selectedPowerSensor.friendly_name} (${selectedPowerSensor.state} ${selectedPowerSensor.unit_of_measurement})` : '')}
+                                onChange={(e) => {
+                                  setPowerSensorSearch(e.target.value);
+                                  if (!isPowerDropdownOpen) setIsPowerDropdownOpen(true);
+                                }}
+                                onFocus={() => {
+                                  setIsPowerDropdownOpen(true);
+                                  setPowerSensorSearch('');
+                                }}
+                                placeholder="Search power sensors..."
+                                className="w-full pl-9 pr-8 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:border-bambu-green focus:outline-none"
+                              />
+                              {haPowerEntity && !isPowerDropdownOpen && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHaPowerEntity('');
+                                    setPowerSensorSearch('');
+                                  }}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-bambu-dark-tertiary rounded"
+                                >
+                                  <X className="w-4 h-4 text-bambu-gray hover:text-white" />
+                                </button>
+                              )}
+                            </div>
+                            {isPowerDropdownOpen && (
+                              <div className="absolute z-50 w-full mt-1 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHaPowerEntity('');
+                                    setIsPowerDropdownOpen(false);
+                                    setPowerSensorSearch('');
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-bambu-gray hover:bg-bambu-dark-tertiary"
+                                >
+                                  None
+                                </button>
+                                {filteredPowerSensors.map((sensor) => (
+                                  <button
+                                    key={sensor.entity_id}
+                                    type="button"
+                                    onClick={() => {
+                                      setHaPowerEntity(sensor.entity_id);
+                                      setIsPowerDropdownOpen(false);
+                                      setPowerSensorSearch('');
+                                    }}
+                                    className={`w-full px-3 py-2 text-left text-sm hover:bg-bambu-dark-tertiary ${
+                                      sensor.entity_id === haPowerEntity ? 'bg-bambu-green/20 text-bambu-green' : 'text-white'
+                                    }`}
+                                  >
+                                    <div className="font-medium">{sensor.friendly_name}</div>
+                                    <div className="text-xs text-bambu-gray">{sensor.entity_id} • {sensor.state} {sensor.unit_of_measurement}</div>
+                                  </button>
+                                ))}
+                                {filteredPowerSensors.length === 0 && (
+                                  <div className="px-3 py-2 text-sm text-bambu-gray">No matching sensors</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Energy Today (kWh) */}
+                      {(() => {
+                        const energySensors = haSensorEntities.filter(s =>
+                          s.unit_of_measurement === 'kWh' || s.unit_of_measurement === 'Wh' || s.unit_of_measurement === 'MWh'
+                        );
+                        const filteredEnergySensors = energyTodaySearch
+                          ? energySensors.filter(s =>
+                              s.entity_id.toLowerCase().includes(energyTodaySearch.toLowerCase()) ||
+                              s.friendly_name.toLowerCase().includes(energyTodaySearch.toLowerCase())
+                            )
+                          : energySensors;
+                        const selectedSensor = haSensorEntities.find(s => s.entity_id === haEnergyTodayEntity);
+
+                        return (
+                          <div ref={energyTodayDropdownRef} className="relative">
+                            <label className="block text-sm text-bambu-gray mb-1">Energy Today (kWh)</label>
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
+                              <input
+                                type="text"
+                                value={isEnergyTodayDropdownOpen ? energyTodaySearch : (selectedSensor ? `${selectedSensor.friendly_name} (${selectedSensor.state} ${selectedSensor.unit_of_measurement})` : '')}
+                                onChange={(e) => {
+                                  setEnergyTodaySearch(e.target.value);
+                                  if (!isEnergyTodayDropdownOpen) setIsEnergyTodayDropdownOpen(true);
+                                }}
+                                onFocus={() => {
+                                  setIsEnergyTodayDropdownOpen(true);
+                                  setEnergyTodaySearch('');
+                                }}
+                                placeholder="Search energy sensors..."
+                                className="w-full pl-9 pr-8 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:border-bambu-green focus:outline-none"
+                              />
+                              {haEnergyTodayEntity && !isEnergyTodayDropdownOpen && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHaEnergyTodayEntity('');
+                                    setEnergyTodaySearch('');
+                                  }}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-bambu-dark-tertiary rounded"
+                                >
+                                  <X className="w-4 h-4 text-bambu-gray hover:text-white" />
+                                </button>
+                              )}
+                            </div>
+                            {isEnergyTodayDropdownOpen && (
+                              <div className="absolute z-50 w-full mt-1 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHaEnergyTodayEntity('');
+                                    setIsEnergyTodayDropdownOpen(false);
+                                    setEnergyTodaySearch('');
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-bambu-gray hover:bg-bambu-dark-tertiary"
+                                >
+                                  None
+                                </button>
+                                {filteredEnergySensors.map((sensor) => (
+                                  <button
+                                    key={sensor.entity_id}
+                                    type="button"
+                                    onClick={() => {
+                                      setHaEnergyTodayEntity(sensor.entity_id);
+                                      setIsEnergyTodayDropdownOpen(false);
+                                      setEnergyTodaySearch('');
+                                    }}
+                                    className={`w-full px-3 py-2 text-left text-sm hover:bg-bambu-dark-tertiary ${
+                                      sensor.entity_id === haEnergyTodayEntity ? 'bg-bambu-green/20 text-bambu-green' : 'text-white'
+                                    }`}
+                                  >
+                                    <div className="font-medium">{sensor.friendly_name}</div>
+                                    <div className="text-xs text-bambu-gray">{sensor.entity_id} • {sensor.state} {sensor.unit_of_measurement}</div>
+                                  </button>
+                                ))}
+                                {filteredEnergySensors.length === 0 && (
+                                  <div className="px-3 py-2 text-sm text-bambu-gray">No matching sensors</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Total Energy (kWh) */}
+                      {(() => {
+                        const energySensors = haSensorEntities.filter(s =>
+                          s.unit_of_measurement === 'kWh' || s.unit_of_measurement === 'Wh' || s.unit_of_measurement === 'MWh'
+                        );
+                        const filteredEnergySensors = energyTotalSearch
+                          ? energySensors.filter(s =>
+                              s.entity_id.toLowerCase().includes(energyTotalSearch.toLowerCase()) ||
+                              s.friendly_name.toLowerCase().includes(energyTotalSearch.toLowerCase())
+                            )
+                          : energySensors;
+                        const selectedSensor = haSensorEntities.find(s => s.entity_id === haEnergyTotalEntity);
+
+                        return (
+                          <div ref={energyTotalDropdownRef} className="relative">
+                            <label className="block text-sm text-bambu-gray mb-1">Total Energy (kWh)</label>
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray pointer-events-none" />
+                              <input
+                                type="text"
+                                value={isEnergyTotalDropdownOpen ? energyTotalSearch : (selectedSensor ? `${selectedSensor.friendly_name} (${selectedSensor.state} ${selectedSensor.unit_of_measurement})` : '')}
+                                onChange={(e) => {
+                                  setEnergyTotalSearch(e.target.value);
+                                  if (!isEnergyTotalDropdownOpen) setIsEnergyTotalDropdownOpen(true);
+                                }}
+                                onFocus={() => {
+                                  setIsEnergyTotalDropdownOpen(true);
+                                  setEnergyTotalSearch('');
+                                }}
+                                placeholder="Search energy sensors..."
+                                className="w-full pl-9 pr-8 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:border-bambu-green focus:outline-none"
+                              />
+                              {haEnergyTotalEntity && !isEnergyTotalDropdownOpen && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHaEnergyTotalEntity('');
+                                    setEnergyTotalSearch('');
+                                  }}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-bambu-dark-tertiary rounded"
+                                >
+                                  <X className="w-4 h-4 text-bambu-gray hover:text-white" />
+                                </button>
+                              )}
+                            </div>
+                            {isEnergyTotalDropdownOpen && (
+                              <div className="absolute z-50 w-full mt-1 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHaEnergyTotalEntity('');
+                                    setIsEnergyTotalDropdownOpen(false);
+                                    setEnergyTotalSearch('');
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-bambu-gray hover:bg-bambu-dark-tertiary"
+                                >
+                                  None
+                                </button>
+                                {filteredEnergySensors.map((sensor) => (
+                                  <button
+                                    key={sensor.entity_id}
+                                    type="button"
+                                    onClick={() => {
+                                      setHaEnergyTotalEntity(sensor.entity_id);
+                                      setIsEnergyTotalDropdownOpen(false);
+                                      setEnergyTotalSearch('');
+                                    }}
+                                    className={`w-full px-3 py-2 text-left text-sm hover:bg-bambu-dark-tertiary ${
+                                      sensor.entity_id === haEnergyTotalEntity ? 'bg-bambu-green/20 text-bambu-green' : 'text-white'
+                                    }`}
+                                  >
+                                    <div className="font-medium">{sensor.friendly_name}</div>
+                                    <div className="text-xs text-bambu-gray">{sensor.entity_id} • {sensor.state} {sensor.unit_of_measurement}</div>
+                                  </button>
+                                ))}
+                                {filteredEnergySensors.length === 0 && (
+                                  <div className="px-3 py-2 text-sm text-bambu-gray">No matching sensors</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </>

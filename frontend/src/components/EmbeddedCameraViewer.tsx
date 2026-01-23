@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { X, RefreshCw, AlertTriangle, Maximize2, Minimize2, GripVertical, WifiOff } from 'lucide-react';
+import { X, RefreshCw, AlertTriangle, Maximize2, Minimize2, GripVertical, WifiOff, ZoomIn, ZoomOut, Fullscreen, Minimize } from 'lucide-react';
 import { api } from '../api/client';
 
 interface EmbeddedCameraViewerProps {
@@ -65,6 +65,11 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
   const [isResizing, setIsResizing] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [isMinimized, setIsMinimized] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
   // Stream state
   const [streamError, setStreamError] = useState(false);
@@ -202,6 +207,81 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     };
   }, [streamLoading, streamError, isReconnecting, isMinimized, printerId, attemptReconnect]);
 
+  // Fullscreen change listener
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const nowFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(nowFullscreen);
+      // Reset zoom and pan when exiting fullscreen
+      if (!nowFullscreen) {
+        setZoomLevel(1);
+        setPanOffset({ x: 0, y: 0 });
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      containerRef.current.requestFullscreen();
+    }
+  };
+
+  const handleZoomIn = () => {
+    setZoomLevel(prev => Math.min(prev + 0.5, 4));
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel(prev => {
+      const newZoom = Math.max(prev - 0.5, 1);
+      if (newZoom === 1) setPanOffset({ x: 0, y: 0 });
+      return newZoom;
+    });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    if (e.deltaY < 0) {
+      handleZoomIn();
+    } else {
+      handleZoomOut();
+    }
+  };
+
+  const handleImageMouseDown = (e: React.MouseEvent) => {
+    if (zoomLevel > 1) {
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
+    }
+  };
+
+  const handleImageMouseMove = (e: React.MouseEvent) => {
+    if (isPanning && zoomLevel > 1) {
+      const newX = e.clientX - panStart.x;
+      const newY = e.clientY - panStart.y;
+      // Limit panning based on zoom level
+      const maxPan = (zoomLevel - 1) * 150;
+      setPanOffset({
+        x: Math.max(-maxPan, Math.min(maxPan, newX)),
+        y: Math.max(-maxPan, Math.min(maxPan, newY)),
+      });
+    }
+  };
+
+  const handleImageMouseUp = () => {
+    setIsPanning(false);
+  };
+
+  const resetZoom = () => {
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
+  };
+
   const handleStreamError = () => {
     setStreamLoading(false);
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
@@ -288,8 +368,8 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
   return (
     <div
       ref={containerRef}
-      className="fixed z-50 bg-bambu-dark-secondary rounded-lg shadow-2xl border border-bambu-dark-tertiary overflow-hidden"
-      style={{
+      className={`${isFullscreen ? 'fixed inset-0 z-[100]' : 'fixed z-50 rounded-lg shadow-2xl border border-bambu-dark-tertiary'} bg-bambu-dark-secondary overflow-hidden`}
+      style={isFullscreen ? undefined : {
         left: state.x,
         top: state.y,
         width: isMinimized ? 200 : state.width,
@@ -316,6 +396,17 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
             <RefreshCw className={`w-3.5 h-3.5 text-bambu-gray ${streamLoading ? 'animate-spin' : ''}`} />
           </button>
           <button
+            onClick={toggleFullscreen}
+            className="p-1 hover:bg-bambu-dark-tertiary rounded"
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? (
+              <Minimize className="w-3.5 h-3.5 text-bambu-gray" />
+            ) : (
+              <Fullscreen className="w-3.5 h-3.5 text-bambu-gray" />
+            )}
+          </button>
+          <button
             onClick={() => setIsMinimized(!isMinimized)}
             className="p-1 hover:bg-bambu-dark-tertiary rounded"
             title={isMinimized ? 'Expand' : 'Minimize'}
@@ -338,7 +429,13 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
 
       {/* Video area */}
       {!isMinimized && (
-        <div className="relative w-full h-[calc(100%-40px)] bg-black flex items-center justify-center">
+        <div
+          className={`relative w-full bg-black flex items-center justify-center overflow-hidden ${isFullscreen ? 'h-[calc(100%-40px)]' : 'h-[calc(100%-40px)]'}`}
+          onWheel={handleWheel}
+          onMouseMove={handleImageMouseMove}
+          onMouseUp={handleImageMouseUp}
+          onMouseLeave={handleImageMouseUp}
+        >
           {streamLoading && !isReconnecting && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
               <RefreshCw className="w-6 h-6 text-bambu-gray animate-spin" />
@@ -373,25 +470,60 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
             key={imageKey}
             src={streamUrl}
             alt="Camera stream"
-            className="max-w-full max-h-full object-contain"
+            className="max-w-full max-h-full object-contain select-none"
+            style={{
+              transform: `scale(${zoomLevel}) translate(${panOffset.x / zoomLevel}px, ${panOffset.y / zoomLevel}px)`,
+              cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
+            }}
             onError={handleStreamError}
             onLoad={handleStreamLoad}
+            onMouseDown={handleImageMouseDown}
+            draggable={false}
           />
 
-          {/* Resize handle */}
-          <div
-            className="absolute bottom-0 right-0 w-6 h-6 cursor-se-resize no-drag hover:bg-white/10 rounded-tl transition-colors"
-            onMouseDown={handleResizeMouseDown}
-            title="Drag to resize"
-          >
-            <svg
-              className="w-6 h-6 text-bambu-gray/70 hover:text-bambu-gray"
-              viewBox="0 0 24 24"
-              fill="currentColor"
+          {/* Zoom controls */}
+          <div className="absolute bottom-2 left-2 flex items-center gap-1 bg-black/60 rounded px-1.5 py-1 no-drag">
+            <button
+              onClick={handleZoomOut}
+              disabled={zoomLevel <= 1}
+              className="p-1 hover:bg-white/10 rounded disabled:opacity-30"
+              title="Zoom out"
             >
-              <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM22 14H20V12H22V14ZM18 18H16V16H18V18ZM14 22H12V20H14V22ZM22 10H20V8H22V10ZM18 14H16V12H18V14ZM14 18H12V16H14V18ZM10 22H8V20H10V22Z" />
-            </svg>
+              <ZoomOut className="w-3.5 h-3.5 text-white" />
+            </button>
+            <button
+              onClick={resetZoom}
+              className="px-1.5 py-0.5 text-xs text-white hover:bg-white/10 rounded min-w-[32px]"
+              title="Reset zoom"
+            >
+              {Math.round(zoomLevel * 100)}%
+            </button>
+            <button
+              onClick={handleZoomIn}
+              disabled={zoomLevel >= 4}
+              className="p-1 hover:bg-white/10 rounded disabled:opacity-30"
+              title="Zoom in"
+            >
+              <ZoomIn className="w-3.5 h-3.5 text-white" />
+            </button>
           </div>
+
+          {/* Resize handle - hide in fullscreen */}
+          {!isFullscreen && (
+            <div
+              className="absolute bottom-0 right-0 w-6 h-6 cursor-se-resize no-drag hover:bg-white/10 rounded-tl transition-colors"
+              onMouseDown={handleResizeMouseDown}
+              title="Drag to resize"
+            >
+              <svg
+                className="w-6 h-6 text-bambu-gray/70 hover:text-bambu-gray"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM22 14H20V12H22V14ZM18 18H16V16H18V18ZM14 22H12V20H14V22ZM22 10H20V8H22V10ZM18 14H16V12H18V14ZM14 18H12V16H14V18ZM10 22H8V20H10V22Z" />
+              </svg>
+            </div>
+          )}
         </div>
       )}
     </div>

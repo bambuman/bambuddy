@@ -2684,7 +2684,7 @@ function PrinterCard({
           <div className="absolute inset-0 bg-black/50 z-0" />
           {/* Modal */}
           <div
-            className="relative z-10 bg-white dark:bg-bambu-dark border border-gray-200 dark:border-bambu-dark-tertiary rounded-xl shadow-2xl w-[560px] overflow-hidden"
+            className="relative z-10 bg-white dark:bg-bambu-dark border border-gray-200 dark:border-bambu-dark-tertiary rounded-xl shadow-2xl w-[560px] max-h-[85vh] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
           {/* Header */}
@@ -2711,7 +2711,7 @@ function PrinterCard({
               <p className="text-xs mt-1 opacity-70">Objects are loaded when a print starts</p>
             </div>
           ) : (
-            <div className="flex flex-col">
+            <div className="flex flex-col overflow-hidden">
               {/* Info Banner */}
               <div className="flex items-center gap-3 px-4 py-2.5 bg-blue-50 dark:bg-blue-500/10 border-b border-gray-200 dark:border-bambu-dark-tertiary">
                 <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center">
@@ -2737,9 +2737,9 @@ function PrinterCard({
               )}
 
               {/* Content: Image + List side by side */}
-              <div className="flex">
+              <div className="flex flex-1 overflow-hidden">
                 {/* Left: Preview Image with object markers */}
-                <div className="w-52 flex-shrink-0 p-4 border-r border-gray-200 dark:border-bambu-dark-tertiary bg-gray-50 dark:bg-bambu-dark-secondary">
+                <div className="w-52 flex-shrink-0 p-4 border-r border-gray-200 dark:border-bambu-dark-tertiary bg-gray-50 dark:bg-bambu-dark-secondary overflow-y-auto">
                   <div className="relative">
                     {status?.cover_url ? (
                       <img
@@ -2824,7 +2824,7 @@ function PrinterCard({
                 </div>
 
                 {/* Right: Object List with prominent IDs */}
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 overflow-y-auto">
                   {objectsData.objects.map((obj) => (
                     <div
                       key={obj.id}
@@ -3110,10 +3110,12 @@ function AddPrinterModal({
   };
 
   const selectPrinter = (printer: DiscoveredPrinter) => {
+    // Don't pre-fill serial if it's a placeholder (unknown-*) - user needs to enter actual serial
+    const serialNumber = printer.serial.startsWith('unknown-') ? '' : printer.serial;
     setForm({
       ...form,
       name: printer.name || '',
-      serial_number: printer.serial,
+      serial_number: serialNumber,
       ip_address: printer.ip_address,
       model: mapModelCode(printer.model),
     });
@@ -3209,6 +3211,9 @@ function AddPrinterModal({
                       </p>
                       <p className="text-xs text-bambu-gray truncate">
                         {mapModelCode(printer.model) || 'Unknown'} • {printer.ip_address}
+                        {printer.serial.startsWith('unknown-') && (
+                          <span className="text-yellow-500"> • Serial required</span>
+                        )}
                       </p>
                     </div>
                     <ChevronDown className="w-4 h-4 text-bambu-gray -rotate-90 flex-shrink-0 ml-2" />

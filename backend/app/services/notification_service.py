@@ -251,11 +251,17 @@ class NotificationService:
             return False, "Bot token and chat ID are required"
 
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+        # Check if message contains URLs (which have underscores that break Markdown)
+        # If so, don't use parse_mode to avoid parsing errors
+        has_url = "http://" in message or "https://" in message
+
         data = {
             "chat_id": chat_id,
             "text": message,
-            "parse_mode": "Markdown",
         }
+        if not has_url:
+            data["parse_mode"] = "Markdown"
 
         client = await self._get_client()
         response = await client.post(url, json=data)
@@ -350,22 +356,33 @@ class NotificationService:
             return False, f"HTTP {response.status_code}: {response.text[:200]}"
 
     async def _send_webhook(self, config: dict, title: str, message: str) -> tuple[bool, str]:
-        """Send notification via generic webhook (POST JSON)."""
+        """Send notification via generic webhook (POST JSON).
+
+        Supports two payload formats:
+        - generic: Custom field names with timestamp/source metadata
+        - slack: Slack/Mattermost compatible format (just {"text": "..."})
+        """
         webhook_url = config.get("webhook_url", "").strip()
         auth_header = config.get("auth_header", "").strip()
-        custom_field_title = config.get("field_title", "title").strip() or "title"
-        custom_field_message = config.get("field_message", "message").strip() or "message"
+        payload_format = config.get("payload_format", "generic").strip()
 
         if not webhook_url:
             return False, "Webhook URL is required"
 
-        # Build payload with custom field names
-        data = {
-            custom_field_title: title,
-            custom_field_message: message,
-            "timestamp": datetime.now().isoformat(),
-            "source": "Bambuddy",
-        }
+        # Build payload based on format
+        if payload_format == "slack":
+            # Slack/Mattermost format - just text field
+            data = {"text": f"*{title}*\n{message}"}
+        else:
+            # Generic format with custom field names
+            custom_field_title = config.get("field_title", "title").strip() or "title"
+            custom_field_message = config.get("field_message", "message").strip() or "message"
+            data = {
+                custom_field_title: title,
+                custom_field_message: message,
+                "timestamp": datetime.now().isoformat(),
+                "source": "Bambuddy",
+            }
 
         headers = {"Content-Type": "application/json"}
         if auth_header:
@@ -667,6 +684,8 @@ class NotificationService:
                 variables["filament_grams"] = f"{archive_data['actual_filament_grams']:.1f}"
             if status == "failed" and archive_data.get("failure_reason"):
                 variables["reason"] = archive_data["failure_reason"]
+            if archive_data.get("finish_photo_url"):
+                variables["finish_photo_url"] = archive_data["finish_photo_url"]
 
         logger.info(f"on_print_complete variables: {variables}, archive_data: {archive_data}")
 

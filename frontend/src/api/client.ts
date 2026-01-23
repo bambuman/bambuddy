@@ -1,19 +1,47 @@
 const API_BASE = '/api/v1';
 
+// Auth token storage
+let authToken: string | null = localStorage.getItem('auth_token');
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+  if (token) {
+    localStorage.setItem('auth_token', token);
+  } else {
+    localStorage.removeItem('auth_token');
+  }
+}
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...options.headers as Record<string, string>,
+  };
+
+  // Add auth token if available
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     cache: 'no-store', // Prevent browser caching of API responses
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
+    // Handle 401 Unauthorized - clear token and redirect to login
+    if (response.status === 401) {
+      setAuthToken(null);
+      // Don't throw here - let the auth context handle redirect
+    }
     const error = await response.json().catch(() => ({}));
     const detail = error.detail;
     const message = typeof detail === 'string'
@@ -589,6 +617,8 @@ export interface AppSettings {
   mqtt_password: string;
   mqtt_topic_prefix: string;
   mqtt_use_tls: boolean;
+  // External URL for notifications
+  external_url: string;
   // Home Assistant integration
   ha_enabled: boolean;
   ha_url: string;
@@ -710,6 +740,10 @@ export interface SmartPlug {
   plug_type: 'tasmota' | 'homeassistant';
   ip_address: string | null;  // Required for Tasmota
   ha_entity_id: string | null;  // Required for Home Assistant (e.g., "switch.printer_plug")
+  // Home Assistant energy sensor entities (optional)
+  ha_power_entity: string | null;
+  ha_energy_today_entity: string | null;
+  ha_energy_total_entity: string | null;
   printer_id: number | null;
   enabled: boolean;
   auto_on: boolean;
@@ -743,6 +777,10 @@ export interface SmartPlugCreate {
   plug_type?: 'tasmota' | 'homeassistant';
   ip_address?: string | null;  // Required for Tasmota
   ha_entity_id?: string | null;  // Required for Home Assistant
+  // Home Assistant energy sensor entities (optional)
+  ha_power_entity?: string | null;
+  ha_energy_today_entity?: string | null;
+  ha_energy_total_entity?: string | null;
   printer_id?: number | null;
   enabled?: boolean;
   auto_on?: boolean;
@@ -769,6 +807,10 @@ export interface SmartPlugUpdate {
   plug_type?: 'tasmota' | 'homeassistant';
   ip_address?: string | null;
   ha_entity_id?: string | null;
+  // Home Assistant energy sensor entities (optional)
+  ha_power_entity?: string | null;
+  ha_energy_today_entity?: string | null;
+  ha_energy_total_entity?: string | null;
   printer_id?: number | null;
   enabled?: boolean;
   auto_on?: boolean;
@@ -796,6 +838,14 @@ export interface HAEntity {
   friendly_name: string;
   state: string | null;
   domain: string;  // "switch", "light", "input_boolean"
+}
+
+// Home Assistant sensor entity for energy monitoring
+export interface HASensorEntity {
+  entity_id: string;
+  friendly_name: string;
+  state: string | null;
+  unit_of_measurement: string | null;  // "W", "kW", "kWh", "Wh"
 }
 
 export interface HATestConnectionResult {
@@ -1375,8 +1425,97 @@ export interface ExternalLinkUpdate {
   icon?: string;
 }
 
+// Auth types
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: UserResponse;
+}
+
+export interface UserResponse {
+  id: number;
+  username: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface UserCreate {
+  username: string;
+  password: string;
+  role: string;
+}
+
+export interface UserUpdate {
+  username?: string;
+  password?: string;
+  role?: string;
+  is_active?: boolean;
+}
+
+export interface SetupRequest {
+  auth_enabled: boolean;
+  admin_username?: string;
+  admin_password?: string;
+}
+
+export interface SetupResponse {
+  auth_enabled: boolean;
+  admin_created?: boolean;
+}
+
+export interface AuthStatus {
+  auth_enabled: boolean;
+  requires_setup: boolean;
+}
+
 // API functions
 export const api = {
+  // Authentication
+  getAuthStatus: () => request<AuthStatus>('/auth/status'),
+  setupAuth: (data: SetupRequest) =>
+    request<SetupResponse>('/auth/setup', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  login: (data: LoginRequest) =>
+    request<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  logout: () =>
+    request<{ message: string }>('/auth/logout', {
+      method: 'POST',
+    }),
+  getCurrentUser: () => request<UserResponse>('/auth/me'),
+  disableAuth: () =>
+    request<{ message: string; auth_enabled: boolean }>('/auth/disable', {
+      method: 'POST',
+    }),
+
+  // Users (admin only)
+  getUsers: () => request<UserResponse[]>('/users/'),
+  getUser: (id: number) => request<UserResponse>(`/users/${id}`),
+  createUser: (data: UserCreate) =>
+    request<UserResponse>('/users/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateUser: (id: number, data: UserUpdate) =>
+    request<UserResponse>(`/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteUser: (id: number) =>
+    request<void>(`/users/${id}`, {
+      method: 'DELETE',
+    }),
+
   // Printers
   getPrinters: () => request<Printer[]>('/printers/'),
   getPrinter: (id: number) => request<Printer>(`/printers/${id}`),
@@ -2072,8 +2211,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url, token }),
     }),
-  getHAEntities: () =>
-    request<HAEntity[]>('/smart-plugs/ha/entities'),
+  getHAEntities: (search?: string) => {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    return request<HAEntity[]>(`/smart-plugs/ha/entities${params}`);
+  },
+  getHASensorEntities: () =>
+    request<HASensorEntity[]>('/smart-plugs/ha/sensors'),
 
   // Print Queue
   getQueue: (printerId?: number, status?: string) => {
@@ -2577,6 +2720,26 @@ export const api = {
     }
     return response.json();
   },
+  extractZipFile: async (
+    file: File,
+    folderId?: number | null,
+    preserveStructure: boolean = true
+  ): Promise<ZipExtractResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const params = new URLSearchParams();
+    if (folderId) params.set('folder_id', String(folderId));
+    params.set('preserve_structure', String(preserveStructure));
+    const response = await fetch(`${API_BASE}/library/files/extract-zip?${params}`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+    return response.json();
+  },
   updateLibraryFile: (id: number, data: LibraryFileUpdate) =>
     request<LibraryFile>(`/library/files/${id}`, {
       method: 'PUT',
@@ -2862,6 +3025,24 @@ export interface LibraryStats {
   disk_free_bytes: number;
   disk_total_bytes: number;
   disk_used_bytes: number;
+}
+
+export interface ZipExtractResult {
+  filename: string;
+  file_id: number;
+  folder_id: number | null;
+}
+
+export interface ZipExtractError {
+  filename: string;
+  error: string;
+}
+
+export interface ZipExtractResponse {
+  extracted: number;
+  folders_created: number;
+  files: ZipExtractResult[];
+  errors: ZipExtractError[];
 }
 
 // Library Queue types
