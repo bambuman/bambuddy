@@ -435,11 +435,24 @@ async def export_backup(
     if include_printers and include_plate_calibration:
         plate_cal_dir = app_settings.plate_calibration_dir
         if plate_cal_dir.exists():
-            backup["plate_calibration"] = []
+            backup["plate_calibration"] = {
+                "files": [],
+                "printer_id_to_serial": {},  # Map old printer IDs to serial numbers for restore
+            }
             for cal_file in plate_cal_dir.iterdir():
                 if cal_file.is_file():
-                    backup["plate_calibration"].append(cal_file.name)
-            if backup["plate_calibration"]:
+                    backup["plate_calibration"]["files"].append(cal_file.name)
+                    # Extract printer ID from filename (e.g., "printer_1_ref_0.jpg" -> 1)
+                    if cal_file.name.startswith("printer_"):
+                        parts = cal_file.name.split("_")
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            old_printer_id = int(parts[1])
+                            if old_printer_id not in backup["plate_calibration"]["printer_id_to_serial"]:
+                                # Look up serial number for this printer ID
+                                backup["plate_calibration"]["printer_id_to_serial"][old_printer_id] = (
+                                    printer_id_to_serial.get(old_printer_id)
+                                )
+            if backup["plate_calibration"]["files"]:
                 backup["included"].append("plate_calibration")
 
     # Filaments
@@ -883,6 +896,8 @@ async def import_backup(
         content = await file.read()
         base_dir = app_settings.base_dir
         files_restored = 0
+        # Store plate calibration files for later (need printer ID remapping after printers restored)
+        plate_cal_files: dict[str, bytes] = {}
 
         # Check if it's a ZIP file
         if file.filename and file.filename.endswith(".zip"):
@@ -903,12 +918,12 @@ async def import_backup(
                         # Ensure path is safe (no path traversal)
                         if ".." in zip_path or zip_path.startswith("/"):
                             continue
-                        # Plate calibration files go to plate_calibration_dir (may differ from base_dir)
+                        # Plate calibration files - store for later processing after printers are restored
                         if zip_path.startswith("plate_calibration/"):
                             filename = zip_path.replace("plate_calibration/", "", 1)
-                            target_path = app_settings.plate_calibration_dir / filename
-                        else:
-                            target_path = base_dir / zip_path
+                            plate_cal_files[filename] = zf.read(zip_path)
+                            continue
+                        target_path = base_dir / zip_path
                         target_path.parent.mkdir(parents=True, exist_ok=True)
                         with zf.open(zip_path) as src, open(target_path, "wb") as dst:
                             dst.write(src.read())
@@ -1053,6 +1068,48 @@ async def import_backup(
                 restored["printers"] += 1
         # Flush printers so other sections can look them up
         await db.flush()
+
+    # Restore plate calibration files (remap printer IDs based on serial numbers)
+    if plate_cal_files:
+        # Build serial_number -> new_printer_id mapping
+        serial_to_new_id: dict[str, int] = {}
+        pr_result = await db.execute(select(Printer))
+        for pr in pr_result.scalars().all():
+            serial_to_new_id[pr.serial_number] = pr.id
+
+        # Get old_id -> serial mapping from backup (supports both old list format and new dict format)
+        plate_cal_data = backup.get("plate_calibration", {})
+        if isinstance(plate_cal_data, dict):
+            old_id_to_serial: dict[int, str | None] = {
+                int(k): v for k, v in plate_cal_data.get("printer_id_to_serial", {}).items()
+            }
+        else:
+            old_id_to_serial = {}
+
+        # Build old_id -> new_id mapping
+        old_id_to_new_id: dict[int, int] = {}
+        for old_id, serial in old_id_to_serial.items():
+            if serial and serial in serial_to_new_id:
+                old_id_to_new_id[old_id] = serial_to_new_id[serial]
+
+        app_settings.plate_calibration_dir.mkdir(parents=True, exist_ok=True)
+
+        for filename, file_data in plate_cal_files.items():
+            # Parse old printer ID from filename (e.g., "printer_3_ref_0.jpg" -> 3)
+            new_filename = filename
+            if filename.startswith("printer_"):
+                parts = filename.split("_")
+                if len(parts) >= 2 and parts[1].isdigit():
+                    old_printer_id = int(parts[1])
+                    if old_printer_id in old_id_to_new_id:
+                        new_printer_id = old_id_to_new_id[old_printer_id]
+                        # Replace old ID with new ID in filename
+                        new_filename = filename.replace(f"printer_{old_printer_id}_", f"printer_{new_printer_id}_", 1)
+
+            target_path = app_settings.plate_calibration_dir / new_filename
+            with open(target_path, "wb") as f:
+                f.write(file_data)
+            files_restored += 1
 
     # Restore notification providers (skip or overwrite duplicates by name)
     # Build printer serial to ID lookup (printers were restored first)
