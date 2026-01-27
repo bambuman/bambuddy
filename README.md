@@ -121,6 +121,7 @@
 - MQTT publishing for Home Assistant, Node-RED, etc.
 - Bambu Cloud profile management
 - K-profiles (pressure advance)
+- **GitHub backup** - Schedule automatic backups of cloud profiles, k profiles and settings to GitHub
 - External sidebar links
 - Webhooks & API keys
 - Interactive API browser with live testing

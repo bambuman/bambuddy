@@ -15,6 +15,7 @@ from backend.app.models.api_key import APIKey
 from backend.app.models.archive import PrintArchive
 from backend.app.models.external_link import ExternalLink
 from backend.app.models.filament import Filament
+from backend.app.models.github_backup import GitHubBackupConfig
 from backend.app.models.maintenance import MaintenanceHistory, MaintenanceType, PrinterMaintenance
 from backend.app.models.notification import NotificationProvider
 from backend.app.models.notification_template import NotificationTemplate
@@ -256,6 +257,7 @@ async def export_backup(
     include_users: bool = Query(
         False, description="Include users (passwords not exported - users will need new passwords)"
     ),
+    include_github_backup: bool = Query(False, description="Include GitHub backup configuration (token not exported)"),
 ):
     """Export selected data as JSON backup."""
     backup: dict = {
@@ -854,6 +856,24 @@ async def export_backup(
             )
         backup["included"].append("users")
 
+    # GitHub backup configuration
+    if include_github_backup:
+        result = await db.execute(select(GitHubBackupConfig).limit(1))
+        config = result.scalar_one_or_none()
+        if config:
+            backup["github_backup"] = {
+                "repository_url": config.repository_url,
+                # access_token intentionally not exported for security
+                "branch": config.branch,
+                "schedule_enabled": config.schedule_enabled,
+                "schedule_type": config.schedule_type,
+                "backup_kprofiles": config.backup_kprofiles,
+                "backup_cloud_profiles": config.backup_cloud_profiles,
+                "backup_settings": config.backup_settings,
+                "enabled": config.enabled,
+            }
+            backup["included"].append("github_backup")
+
     # If there are files to include (icons or archives), create ZIP file
     if backup_files:
         zip_buffer = io.BytesIO()
@@ -953,6 +973,7 @@ async def import_backup(
         "projects": 0,
         "pending_uploads": 0,
         "users": 0,
+        "github_backup": 0,
     }
     skipped = {
         "settings": 0,
@@ -967,6 +988,7 @@ async def import_backup(
         "projects": 0,
         "pending_uploads": 0,
         "users": 0,
+        "github_backup": 0,
     }
     skipped_details = {
         "notification_providers": [],
@@ -1965,6 +1987,42 @@ async def import_backup(
                 db.add(user)
                 restored["users"] += 1
                 new_users.append(f"{user_data['username']} (temp password: {temp_password})")
+
+    # Restore GitHub backup configuration (note: access_token not included for security)
+    if "github_backup" in backup:
+        github_data = backup["github_backup"]
+        result = await db.execute(select(GitHubBackupConfig).limit(1))
+        existing = result.scalar_one_or_none()
+        if existing:
+            if overwrite:
+                existing.repository_url = github_data.get("repository_url", existing.repository_url)
+                existing.branch = github_data.get("branch", existing.branch)
+                existing.schedule_enabled = github_data.get("schedule_enabled", existing.schedule_enabled)
+                existing.schedule_type = github_data.get("schedule_type", existing.schedule_type)
+                existing.backup_kprofiles = github_data.get("backup_kprofiles", existing.backup_kprofiles)
+                existing.backup_cloud_profiles = github_data.get(
+                    "backup_cloud_profiles", existing.backup_cloud_profiles
+                )
+                existing.backup_settings = github_data.get("backup_settings", existing.backup_settings)
+                existing.enabled = github_data.get("enabled", existing.enabled)
+                # Note: access_token must be re-entered after restore
+                restored["github_backup"] += 1
+            else:
+                skipped["github_backup"] += 1
+        else:
+            config = GitHubBackupConfig(
+                repository_url=github_data.get("repository_url", ""),
+                access_token="",  # Must be entered after restore
+                branch=github_data.get("branch", "main"),
+                schedule_enabled=github_data.get("schedule_enabled", False),
+                schedule_type=github_data.get("schedule_type", "daily"),
+                backup_kprofiles=github_data.get("backup_kprofiles", True),
+                backup_cloud_profiles=github_data.get("backup_cloud_profiles", True),
+                backup_settings=github_data.get("backup_settings", False),
+                enabled=False,  # Disabled until token is entered
+            )
+            db.add(config)
+            restored["github_backup"] += 1
 
     await db.commit()
 

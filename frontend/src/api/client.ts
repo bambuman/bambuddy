@@ -1296,6 +1296,78 @@ export interface NotificationProviderUpdate {
   printer_id?: number | null;
 }
 
+// GitHub Backup types
+export type ScheduleType = 'hourly' | 'daily' | 'weekly';
+
+export interface GitHubBackupConfig {
+  id: number;
+  repository_url: string;
+  has_token: boolean;
+  branch: string;
+  schedule_enabled: boolean;
+  schedule_type: ScheduleType;
+  backup_kprofiles: boolean;
+  backup_cloud_profiles: boolean;
+  backup_settings: boolean;
+  enabled: boolean;
+  last_backup_at: string | null;
+  last_backup_status: string | null;
+  last_backup_message: string | null;
+  last_backup_commit_sha: string | null;
+  next_scheduled_run: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitHubBackupConfigCreate {
+  repository_url: string;
+  access_token: string;
+  branch?: string;
+  schedule_enabled?: boolean;
+  schedule_type?: ScheduleType;
+  backup_kprofiles?: boolean;
+  backup_cloud_profiles?: boolean;
+  backup_settings?: boolean;
+  enabled?: boolean;
+}
+
+export interface GitHubBackupLog {
+  id: number;
+  config_id: number;
+  started_at: string;
+  completed_at: string | null;
+  status: string;
+  trigger: string;
+  commit_sha: string | null;
+  files_changed: number;
+  error_message: string | null;
+}
+
+export interface GitHubBackupStatus {
+  configured: boolean;
+  enabled: boolean;
+  is_running: boolean;
+  progress: string | null;
+  last_backup_at: string | null;
+  last_backup_status: string | null;
+  next_scheduled_run: string | null;
+}
+
+export interface GitHubTestConnectionResponse {
+  success: boolean;
+  message: string;
+  repo_name: string | null;
+  permissions: Record<string, boolean> | null;
+}
+
+export interface GitHubBackupTriggerResponse {
+  success: boolean;
+  message: string;
+  log_id: number | null;
+  commit_sha: string | null;
+  files_changed: number;
+}
+
 export interface NotificationTestRequest {
   provider_type: ProviderType;
   config: Record<string, unknown>;
@@ -3038,6 +3110,46 @@ export const api = {
         used_meters: number;
       }>;
     }>(`/library/files/${fileId}/filament-requirements${plateId !== undefined ? `?plate_id=${plateId}` : ''}`),
+
+  // GitHub Backup
+  getGitHubBackupConfig: () =>
+    request<GitHubBackupConfig | null>('/github-backup/config'),
+
+  saveGitHubBackupConfig: (config: GitHubBackupConfigCreate) =>
+    request<GitHubBackupConfig>('/github-backup/config', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }),
+
+  updateGitHubBackupConfig: (config: Partial<GitHubBackupConfigCreate>) =>
+    request<GitHubBackupConfig>('/github-backup/config', {
+      method: 'PATCH',
+      body: JSON.stringify(config),
+    }),
+
+  deleteGitHubBackupConfig: () =>
+    request<{ message: string }>('/github-backup/config', { method: 'DELETE' }),
+
+  testGitHubConnection: (repoUrl: string, token: string) =>
+    request<GitHubTestConnectionResponse>(
+      `/github-backup/test?repo_url=${encodeURIComponent(repoUrl)}&token=${encodeURIComponent(token)}`,
+      { method: 'POST' }
+    ),
+
+  testGitHubStoredConnection: () =>
+    request<GitHubTestConnectionResponse>('/github-backup/test-stored', { method: 'POST' }),
+
+  triggerGitHubBackup: () =>
+    request<GitHubBackupTriggerResponse>('/github-backup/run', { method: 'POST' }),
+
+  getGitHubBackupStatus: () =>
+    request<GitHubBackupStatus>('/github-backup/status'),
+
+  getGitHubBackupLogs: (limit: number = 50) =>
+    request<GitHubBackupLog[]>(`/github-backup/logs?limit=${limit}`),
+
+  clearGitHubBackupLogs: (keepLast: number = 10) =>
+    request<{ deleted: number; message: string }>(`/github-backup/logs?keep_last=${keepLast}`, { method: 'DELETE' }),
 };
 
 // AMS History types

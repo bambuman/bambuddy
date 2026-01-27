@@ -5,6 +5,17 @@ All notable changes to Bambuddy will be documented in this file.
 ## [0.1.6] - Not released
 
 ### New Features
+- **GitHub Profile Backup** - Automatically backup your Cloud profiles, K-profiles and settings to a GitHub repository:
+  - Configure GitHub repository URL and Personal Access Token
+  - Schedule backups hourly, daily, or weekly
+  - Manual on-demand backup trigger
+  - Backs up K-profiles (per-printer), cloud profiles, and app settings
+  - Skip unchanged commits (only creates commit when data changes)
+  - Real-time progress tracking during backup
+  - Backup history log with status and commit links
+  - Requires Bambu Cloud login for full profile access
+  - New Settings → Backup & Restore tab (local backup/restore moved here)
+  - Included in local backup/restore (except PAT for security)
 - **Plate Not Empty Notification** - Dedicated notification category for build plate detection:
   - New toggle in notification provider settings (enabled by default)
   - Sends immediately (bypasses quiet hours and digest mode)

@@ -1,11 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Plug, AlertTriangle, RotateCcw, Bell, Download, RefreshCw, ExternalLink, Globe, Droplets, Thermometer, FileText, Edit2, Send, CheckCircle, XCircle, History, Trash2, Upload, Zap, TrendingUp, Calendar, DollarSign, Power, PowerOff, Key, Copy, Database, X, Shield, Printer, Cylinder, Wifi, Home, Video, Users, Lock, Unlock } from 'lucide-react';
+import { Loader2, Plus, Plug, AlertTriangle, RotateCcw, Bell, Download, RefreshCw, ExternalLink, Globe, Droplets, Thermometer, FileText, Edit2, Send, CheckCircle, XCircle, History, Trash2, Zap, TrendingUp, Calendar, DollarSign, Power, PowerOff, Key, Copy, Database, X, Shield, Printer, Cylinder, Wifi, Home, Video, Users, Lock, Unlock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDateOnly } from '../utils/date';
-import type { AppSettings, AppSettingsUpdate, SmartPlug, SmartPlugStatus, NotificationProvider, NotificationTemplate, UpdateStatus } from '../api/client';
+import type { AppSettings, AppSettingsUpdate, SmartPlug, SmartPlugStatus, NotificationProvider, NotificationTemplate, UpdateStatus, GitHubBackupStatus, CloudAuthStatus } from '../api/client';
 import { Card, CardContent, CardHeader } from '../components/Card';
 import { Button } from '../components/Button';
 import { SmartPlugCard } from '../components/SmartPlugCard';
@@ -15,11 +15,10 @@ import { AddNotificationModal } from '../components/AddNotificationModal';
 import { NotificationTemplateEditor } from '../components/NotificationTemplateEditor';
 import { NotificationLogViewer } from '../components/NotificationLogViewer';
 import { ConfirmModal } from '../components/ConfirmModal';
-import { BackupModal } from '../components/BackupModal';
-import { RestoreModal } from '../components/RestoreModal';
 import { SpoolmanSettings } from '../components/SpoolmanSettings';
 import { ExternalLinksSettings } from '../components/ExternalLinksSettings';
 import { VirtualPrinterSettings } from '../components/VirtualPrinterSettings';
+import { GitHubBackupSettings } from '../components/GitHubBackupSettings';
 import { APIBrowser } from '../components/APIBrowser';
 import { virtualPrinterApi } from '../api/client';
 import { defaultNavItems, getDefaultView, setDefaultView } from '../components/Layout';
@@ -29,7 +28,7 @@ import { useTheme, type ThemeStyle, type DarkBackground, type LightBackground, t
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Palette } from 'lucide-react';
 
-const validTabs = ['general', 'network', 'plugs', 'notifications', 'filament', 'apikeys', 'virtual-printer', 'users'] as const;
+const validTabs = ['general', 'network', 'plugs', 'notifications', 'filament', 'apikeys', 'virtual-printer', 'users', 'backup'] as const;
 type TabType = typeof validTabs[number];
 
 export function SettingsPage() {
@@ -37,7 +36,7 @@ export function SettingsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
-  const { showToast, showPersistentToast, dismissToast } = useToast();
+  const { showToast } = useToast();
   const { authEnabled, user, refreshAuth } = useAuth();
   const {
     mode,
@@ -85,8 +84,6 @@ export function SettingsPage() {
   const [showClearLogsConfirm, setShowClearLogsConfirm] = useState(false);
   const [showClearStorageConfirm, setShowClearStorageConfirm] = useState(false);
   const [showBulkPlugConfirm, setShowBulkPlugConfirm] = useState<'on' | 'off' | null>(null);
-  const [showBackupModal, setShowBackupModal] = useState(false);
-  const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [showDisableAuthConfirm, setShowDisableAuthConfirm] = useState(false);
 
@@ -252,6 +249,18 @@ export function SettingsPage() {
     queryKey: ['mqtt-status'],
     queryFn: api.getMQTTStatus,
     refetchInterval: activeTab === 'network' ? 5000 : false, // Poll every 5s when on Network tab
+  });
+
+  // GitHub backup status for Backup tab indicator
+  const { data: githubBackupStatus } = useQuery<GitHubBackupStatus>({
+    queryKey: ['github-backup-status'],
+    queryFn: api.getGitHubBackupStatus,
+  });
+
+  // Cloud auth status for Backup tab indicator
+  const { data: cloudAuthStatus } = useQuery<CloudAuthStatus>({
+    queryKey: ['cloud-status'],
+    queryFn: api.getCloudStatus,
   });
 
   const applyUpdateMutation = useMutation({
@@ -693,6 +702,18 @@ export function SettingsPage() {
           {authEnabled && (
             <span className={`w-2 h-2 rounded-full ${authEnabled ? 'bg-green-400' : 'bg-gray-500'}`} />
           )}
+        </button>
+        <button
+          onClick={() => handleTabChange('backup')}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2 ${
+            activeTab === 'backup'
+              ? 'text-bambu-green border-bambu-green'
+              : 'text-bambu-gray hover:text-gray-900 dark:hover:text-white border-transparent'
+          }`}
+        >
+          <Database className="w-4 h-4" />
+          Backup
+          <span className={`w-2 h-2 rounded-full ${cloudAuthStatus?.is_authenticated && githubBackupStatus?.configured && githubBackupStatus?.enabled ? 'bg-green-400' : 'bg-gray-500'}`} />
         </button>
       </div>
 
@@ -1390,57 +1411,21 @@ export function SettingsPage() {
               <h2 className="text-lg font-semibold text-white">Data Management</h2>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Backup/Restore */}
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-white">Backup Data</p>
+                  <p className="text-white">Clear Notification Logs</p>
                   <p className="text-sm text-bambu-gray">
-                    Export settings, providers, printers, and more
+                    Delete notification logs older than 30 days
                   </p>
                 </div>
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => setShowBackupModal(true)}
+                  onClick={() => setShowClearLogsConfirm(true)}
                 >
-                  <Download className="w-4 h-4" />
-                  Export
+                  <Trash2 className="w-4 h-4" />
+                  Clear
                 </Button>
-              </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-white">Restore Backup</p>
-                  <p className="text-sm text-bambu-gray">
-                    Import settings from a backup file with duplicate handling options
-                  </p>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setShowRestoreModal(true)}
-                >
-                  <Upload className="w-4 h-4" />
-                  Restore
-                </Button>
-              </div>
-
-              <div className="border-t border-bambu-dark-tertiary pt-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Clear Notification Logs</p>
-                    <p className="text-sm text-bambu-gray">
-                      Delete notification logs older than 30 days
-                    </p>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setShowClearLogsConfirm(true)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Clear
-                  </Button>
-                </div>
               </div>
               <div className="flex items-center justify-between">
                 <div>
@@ -1456,6 +1441,22 @@ export function SettingsPage() {
                 >
                   <Trash2 className="w-4 h-4" />
                   Reset
+                </Button>
+              </div>
+              <div className="flex items-center justify-between pt-4 border-t border-bambu-dark-tertiary">
+                <div>
+                  <p className="text-white">Backup & Restore</p>
+                  <p className="text-sm text-bambu-gray">
+                    Export/import settings and configure GitHub backup
+                  </p>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleTabChange('backup')}
+                >
+                  <Database className="w-4 h-4" />
+                  Go to Backup
                 </Button>
               </div>
             </CardContent>
@@ -2877,73 +2878,6 @@ export function SettingsPage() {
         />
       )}
 
-      {/* Backup Modal */}
-      {showBackupModal && (
-        <BackupModal
-          onClose={() => setShowBackupModal(false)}
-          onExport={async (categories) => {
-            setShowBackupModal(false);
-            const toastId = 'backup-progress';
-            const includesArchives = categories.archives;
-
-            // Show persistent loading toast for archive backups (can be large)
-            if (includesArchives) {
-              showPersistentToast(toastId, t('backup.preparing', { defaultValue: 'Preparing backup...' }), 'loading');
-            }
-
-            try {
-              const { blob, filename } = await api.exportBackup(categories);
-
-              // Dismiss loading toast before download starts
-              if (includesArchives) {
-                dismissToast(toastId);
-              }
-
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = filename;
-              a.click();
-              URL.revokeObjectURL(url);
-              showToast(t('backup.downloaded', { defaultValue: 'Backup downloaded' }), 'success');
-            } catch {
-              // Dismiss loading toast on error
-              if (includesArchives) {
-                dismissToast(toastId);
-              }
-              showToast(t('backup.failed', { defaultValue: 'Failed to create backup' }), 'error');
-            }
-          }}
-        />
-      )}
-
-      {/* Restore Modal */}
-      {showRestoreModal && (
-        <RestoreModal
-          onClose={() => setShowRestoreModal(false)}
-          onRestore={async (file, overwrite) => {
-            return await api.importBackup(file, overwrite);
-          }}
-          onSuccess={() => {
-            // Reset local settings to force re-sync from restored data
-            setLocalSettings(null);
-            isInitialLoadRef.current = true;
-            // Use resetQueries to clear cached data completely
-            // This ensures fresh data is fetched, not stale cache
-            queryClient.resetQueries({ queryKey: ['settings'] });
-            // Invalidate other queries that may have changed
-            queryClient.invalidateQueries({ queryKey: ['notification-providers'] });
-            queryClient.invalidateQueries({ queryKey: ['notification-templates'] });
-            queryClient.invalidateQueries({ queryKey: ['smart-plugs'] });
-            queryClient.invalidateQueries({ queryKey: ['external-links'] });
-            queryClient.invalidateQueries({ queryKey: ['printers'] });
-            queryClient.invalidateQueries({ queryKey: ['filaments'] });
-            queryClient.invalidateQueries({ queryKey: ['maintenance-types'] });
-            queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-          }}
-        />
-      )}
-
       {/* Release Notes Modal */}
       {showReleaseNotes && updateCheck?.release_notes && (
         <div
@@ -3195,6 +3129,11 @@ export function SettingsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Backup Tab */}
+      {activeTab === 'backup' && (
+        <GitHubBackupSettings />
       )}
 
       {/* Disable Authentication Confirmation Modal */}

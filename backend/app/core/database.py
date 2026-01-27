@@ -38,6 +38,7 @@ async def init_db():
         archive,
         external_link,
         filament,
+        github_backup,
         kprofile_note,
         library,
         maintenance,

@@ -2,6 +2,7 @@ from backend.app.models.ams_history import AMSSensorHistory
 from backend.app.models.api_key import APIKey
 from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
+from backend.app.models.github_backup import GitHubBackupConfig, GitHubBackupLog
 from backend.app.models.kprofile_note import KProfileNote
 from backend.app.models.library import LibraryFile, LibraryFolder
 from backend.app.models.maintenance import MaintenanceHistory, MaintenanceType, PrinterMaintenance
@@ -33,4 +34,6 @@ __all__ = [
     "LibraryFolder",
     "LibraryFile",
     "User",
+    "GitHubBackupConfig",
+    "GitHubBackupLog",
 ]

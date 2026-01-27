@@ -182,6 +182,7 @@ from backend.app.api.routes import (
     external_links,
     filaments,
     firmware,
+    github_backup,
     kprofiles,
     library,
     maintenance,
@@ -209,6 +210,7 @@ from backend.app.models.smart_plug import SmartPlug
 from backend.app.services.archive import ArchiveService
 from backend.app.services.bambu_ftp import download_file_async, get_ftp_retry_settings, with_ftp_retry
 from backend.app.services.bambu_mqtt import PrinterState
+from backend.app.services.github_backup import github_backup_service
 from backend.app.services.homeassistant import homeassistant_service
 from backend.app.services.mqtt_relay import mqtt_relay
 from backend.app.services.notification_service import notification_service
@@ -2383,6 +2385,9 @@ async def lifespan(app: FastAPI):
     # Start the notification digest scheduler
     notification_service.start_digest_scheduler()
 
+    # Start the GitHub backup scheduler
+    await github_backup_service.start_scheduler()
+
     # Start AMS history recording
     start_ams_history_recording()
 
@@ -2422,6 +2427,7 @@ async def lifespan(app: FastAPI):
     print_scheduler.stop()
     smart_plug_manager.stop_scheduler()
     notification_service.stop_digest_scheduler()
+    github_backup_service.stop_scheduler()
     stop_ams_history_recording()
     stop_runtime_tracking()
     printer_manager.disconnect_all()
@@ -2468,6 +2474,7 @@ app.include_router(websocket.router, prefix=app_settings.api_prefix)
 app.include_router(discovery.router, prefix=app_settings.api_prefix)
 app.include_router(pending_uploads.router, prefix=app_settings.api_prefix)
 app.include_router(firmware.router, prefix=app_settings.api_prefix)
+app.include_router(github_backup.router, prefix=app_settings.api_prefix)
 
 
 # Serve static files (React build)
