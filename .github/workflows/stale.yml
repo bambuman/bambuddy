@@ -17,4 +17,5 @@ jobs:
           close-issue-message: 'Closed due to inactivity. Feel free to reopen if this is still relevant.'
           days-before-stale: 21
           days-before-close: 7
-          stale-issue-label: 'feedback'
+          stale-issue-label: 'stale'
+          remove-issue-labels: 'feedback'
