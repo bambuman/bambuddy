@@ -300,6 +300,7 @@ export interface Archive {
   nozzle_diameter: number | null;
   bed_temperature: number | null;
   nozzle_temperature: number | null;
+  sliced_for_model: string | null;  // Printer model this file was sliced for
   status: string;
   started_at: string | null;
   completed_at: string | null;
@@ -1000,6 +1001,7 @@ export interface DiscoveredTasmotaDevice {
 export interface PrintQueueItem {
   id: number;
   printer_id: number | null;  // null = unassigned
+  target_model: string | null;  // Target printer model for model-based assignment
   // Either archive_id OR library_file_id must be set (archive created at print start)
   archive_id: number | null;
   library_file_id: number | null;
@@ -1032,6 +1034,7 @@ export interface PrintQueueItem {
 
 export interface PrintQueueItemCreate {
   printer_id?: number | null;  // null = unassigned
+  target_model?: string | null;  // Target printer model (mutually exclusive with printer_id)
   // Either archive_id OR library_file_id must be provided
   archive_id?: number | null;
   library_file_id?: number | null;
@@ -1052,6 +1055,7 @@ export interface PrintQueueItemCreate {
 
 export interface PrintQueueItemUpdate {
   printer_id?: number | null;  // null = unassign
+  target_model?: string | null;  // Target printer model (mutually exclusive with printer_id)
   position?: number;
   scheduled_time?: string | null;
   require_previous_success?: boolean;

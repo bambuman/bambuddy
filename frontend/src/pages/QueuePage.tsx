@@ -391,9 +391,13 @@ function SortableQueueItem({
           </div>
 
           <div className="flex items-center gap-3 text-sm text-bambu-gray">
-            <span className={`flex items-center gap-1.5 ${item.printer_id === null ? 'text-orange-400' : ''}`}>
+            <span className={`flex items-center gap-1.5 ${item.printer_id === null && !item.target_model ? 'text-orange-400' : ''} ${item.target_model ? 'text-blue-400' : ''}`}>
               <Printer className="w-3.5 h-3.5" />
-              {item.printer_id === null ? 'Unassigned' : (item.printer_name || `Printer #${item.printer_id}`)}
+              {item.target_model
+                ? `Any ${item.target_model}`
+                : item.printer_id === null
+                  ? 'Unassigned'
+                  : (item.printer_name || `Printer #${item.printer_id}`)}
             </span>
             {item.print_time_seconds && (
               <span className="flex items-center gap-1.5">

@@ -760,6 +760,18 @@ async def run_migrations(conn):
     except Exception:
         pass
 
+    # Migration: Add sliced_for_model column to print_archives for printer model from 3MF
+    try:
+        await conn.execute(text("ALTER TABLE print_archives ADD COLUMN sliced_for_model VARCHAR(50)"))
+    except Exception:
+        pass
+
+    # Migration: Add target_model column to print_queue for model-based assignment
+    try:
+        await conn.execute(text("ALTER TABLE print_queue ADD COLUMN target_model VARCHAR(50)"))
+    except Exception:
+        pass
+
 
 async def seed_notification_templates():
     """Seed default notification templates if they don't exist."""

@@ -15,6 +15,9 @@ class PrintQueueItem(Base):
 
     # Links
     printer_id: Mapped[int | None] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), nullable=True)
+    # Target printer model for model-based assignment (mutually exclusive with printer_id)
+    # When set, scheduler assigns to any idle printer of matching model
+    target_model: Mapped[str | None] = mapped_column(String(50), nullable=True)
     # Either archive_id OR library_file_id must be set (archive created at print start from library file)
     archive_id: Mapped[int | None] = mapped_column(ForeignKey("print_archives.id", ondelete="CASCADE"), nullable=True)
     library_file_id: Mapped[int | None] = mapped_column(

@@ -17,6 +17,7 @@ UTCDatetime = Annotated[datetime | None, PlainSerializer(serialize_utc_datetime)
 
 class PrintQueueItemCreate(BaseModel):
     printer_id: int | None = None  # None = unassigned, user assigns later
+    target_model: str | None = None  # Target printer model (mutually exclusive with printer_id)
     # Either archive_id OR library_file_id must be provided
     archive_id: int | None = None
     library_file_id: int | None = None
@@ -40,6 +41,7 @@ class PrintQueueItemCreate(BaseModel):
 
 class PrintQueueItemUpdate(BaseModel):
     printer_id: int | None = None
+    target_model: str | None = None  # Target printer model (mutually exclusive with printer_id)
     position: int | None = None
     scheduled_time: datetime | None = None
     require_previous_success: bool | None = None
@@ -59,6 +61,7 @@ class PrintQueueItemUpdate(BaseModel):
 class PrintQueueItemResponse(BaseModel):
     id: int
     printer_id: int | None  # None = unassigned
+    target_model: str | None = None  # Target printer model for model-based assignment
     archive_id: int | None  # None if library_file_id is set (archive created at print start)
     library_file_id: int | None  # For queue items from library files
     position: int

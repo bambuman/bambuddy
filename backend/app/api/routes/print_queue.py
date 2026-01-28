@@ -42,6 +42,7 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
     item_dict = {
         "id": item.id,
         "printer_id": item.printer_id,
+        "target_model": item.target_model,
         "archive_id": item.archive_id,
         "library_file_id": item.library_file_id,
         "position": item.position,
@@ -124,11 +125,23 @@ async def add_to_queue(
     if not data.archive_id and not data.library_file_id:
         raise HTTPException(400, "Either archive_id or library_file_id must be provided")
 
+    # Cannot specify both printer_id and target_model
+    if data.printer_id and data.target_model:
+        raise HTTPException(400, "Cannot specify both printer_id and target_model")
+
     # Validate printer exists (if assigned)
     if data.printer_id is not None:
         result = await db.execute(select(Printer).where(Printer.id == data.printer_id))
         if not result.scalar_one_or_none():
             raise HTTPException(400, "Printer not found")
+
+    # Validate target_model has active printers
+    if data.target_model:
+        result = await db.execute(
+            select(Printer).where(Printer.model == data.target_model).where(Printer.is_active == True)  # noqa: E712
+        )
+        if not result.scalars().first():
+            raise HTTPException(400, f"No active printers for model: {data.target_model}")
 
     # Validate archive exists (if provided)
     if data.archive_id:
@@ -142,7 +155,7 @@ async def add_to_queue(
         if not result.scalar_one_or_none():
             raise HTTPException(400, "Library file not found")
 
-    # Get next position for this printer (or for unassigned items)
+    # Get next position for this printer (or for unassigned/model-based items)
     if data.printer_id is not None:
         result = await db.execute(
             select(func.max(PrintQueueItem.position))
@@ -150,7 +163,7 @@ async def add_to_queue(
             .where(PrintQueueItem.status == "pending")
         )
     else:
-        # For unassigned items, get max position across all unassigned
+        # For unassigned/model-based items, get max position across all unassigned
         result = await db.execute(
             select(func.max(PrintQueueItem.position))
             .where(PrintQueueItem.printer_id.is_(None))
@@ -160,6 +173,7 @@ async def add_to_queue(
 
     item = PrintQueueItem(
         printer_id=data.printer_id,
+        target_model=data.target_model,
         archive_id=data.archive_id,
         library_file_id=data.library_file_id,
         scheduled_time=data.scheduled_time,
@@ -185,7 +199,8 @@ async def add_to_queue(
     await db.refresh(item, ["archive", "printer", "library_file"])
 
     source_name = f"archive {data.archive_id}" if data.archive_id else f"library file {data.library_file_id}"
-    logger.info(f"Added {source_name} to queue for printer {data.printer_id or 'unassigned'}")
+    target_desc = data.printer_id or (f"model {data.target_model}" if data.target_model else "unassigned")
+    logger.info(f"Added {source_name} to queue for {target_desc}")
 
     # MQTT relay - publish queue job added
     try:
@@ -287,11 +302,25 @@ async def update_queue_item(
 
     update_data = data.model_dump(exclude_unset=True)
 
+    # Cannot specify both printer_id and target_model
+    new_printer_id = update_data.get("printer_id", item.printer_id)
+    new_target_model = update_data.get("target_model", item.target_model)
+    if new_printer_id and new_target_model:
+        raise HTTPException(400, "Cannot specify both printer_id and target_model")
+
     # Validate new printer_id if being changed (and not None)
     if "printer_id" in update_data and update_data["printer_id"] is not None:
         result = await db.execute(select(Printer).where(Printer.id == update_data["printer_id"]))
         if not result.scalar_one_or_none():
             raise HTTPException(400, "Printer not found")
+
+    # Validate target_model has active printers
+    if "target_model" in update_data and update_data["target_model"]:
+        result = await db.execute(
+            select(Printer).where(Printer.model == update_data["target_model"]).where(Printer.is_active == True)  # noqa: E712
+        )
+        if not result.scalars().first():
+            raise HTTPException(400, f"No active printers for model: {update_data['target_model']}")
 
     # Serialize ams_mapping to JSON for TEXT column storage
     if "ams_mapping" in update_data:

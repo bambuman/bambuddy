@@ -78,6 +78,7 @@ def archive_to_response(
         "nozzle_diameter": archive.nozzle_diameter,
         "bed_temperature": archive.bed_temperature,
         "nozzle_temperature": archive.nozzle_temperature,
+        "sliced_for_model": archive.sliced_for_model,
         "status": archive.status,
         "started_at": archive.started_at,
         "completed_at": archive.completed_at,

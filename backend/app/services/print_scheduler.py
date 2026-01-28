@@ -62,13 +62,10 @@ class PrintScheduler:
             if not items:
                 return
 
-            # Group by printer - only process first item per printer
-            processed_printers = set()
+            # Track busy printers to avoid assigning multiple items to same printer
+            busy_printers: set[int] = set()
 
             for item in items:
-                if item.printer_id in processed_printers:
-                    continue
-
                 # Check scheduled time first (scheduled_time is stored in UTC from ISO string)
                 if item.scheduled_time and item.scheduled_time > datetime.utcnow():
                     continue
@@ -77,46 +74,91 @@ class PrintScheduler:
                 if item.manual_start:
                     continue
 
-                # Check if printer is idle
-                printer_idle = self._is_printer_idle(item.printer_id)
-                printer_connected = printer_manager.is_connected(item.printer_id)
+                if item.printer_id:
+                    # Specific printer assignment (existing behavior)
+                    if item.printer_id in busy_printers:
+                        continue
 
-                # If printer not connected, try to power on via smart plug
-                if not printer_connected:
-                    plug = await self._get_smart_plug(db, item.printer_id)
-                    if plug and plug.auto_on and plug.enabled:
-                        logger.info(f"Printer {item.printer_id} offline, attempting to power on via smart plug")
-                        powered_on = await self._power_on_and_wait(plug, item.printer_id, db)
-                        if powered_on:
-                            printer_connected = True
-                            printer_idle = self._is_printer_idle(item.printer_id)
+                    # Check if printer is idle
+                    printer_idle = self._is_printer_idle(item.printer_id)
+                    printer_connected = printer_manager.is_connected(item.printer_id)
+
+                    # If printer not connected, try to power on via smart plug
+                    if not printer_connected:
+                        plug = await self._get_smart_plug(db, item.printer_id)
+                        if plug and plug.auto_on and plug.enabled:
+                            logger.info(f"Printer {item.printer_id} offline, attempting to power on via smart plug")
+                            powered_on = await self._power_on_and_wait(plug, item.printer_id, db)
+                            if powered_on:
+                                printer_connected = True
+                                printer_idle = self._is_printer_idle(item.printer_id)
+                            else:
+                                logger.warning(f"Could not power on printer {item.printer_id} via smart plug")
+                                busy_printers.add(item.printer_id)
+                                continue
                         else:
-                            logger.warning(f"Could not power on printer {item.printer_id} via smart plug")
-                            processed_printers.add(item.printer_id)
+                            # No plug or auto_on disabled
+                            busy_printers.add(item.printer_id)
                             continue
-                    else:
-                        # No plug or auto_on disabled
-                        processed_printers.add(item.printer_id)
+
+                    # Check if printer is idle (busy with another print)
+                    if not printer_idle:
+                        busy_printers.add(item.printer_id)
                         continue
 
-                # Check if printer is idle (busy with another print)
-                if not printer_idle:
-                    processed_printers.add(item.printer_id)
-                    continue
+                    # Check condition (previous print success)
+                    if item.require_previous_success:
+                        if not await self._check_previous_success(db, item):
+                            item.status = "skipped"
+                            item.error_message = "Previous print failed or was aborted"
+                            item.completed_at = datetime.now()
+                            await db.commit()
+                            logger.info(f"Skipped queue item {item.id} - previous print failed")
+                            continue
 
-                # Check condition (previous print success)
-                if item.require_previous_success:
-                    if not await self._check_previous_success(db, item):
-                        item.status = "skipped"
-                        item.error_message = "Previous print failed or was aborted"
-                        item.completed_at = datetime.now()
-                        await db.commit()
-                        logger.info(f"Skipped queue item {item.id} - previous print failed")
-                        continue
+                    # Start the print
+                    await self._start_print(db, item)
+                    busy_printers.add(item.printer_id)
 
-                # Start the print
-                await self._start_print(db, item)
-                processed_printers.add(item.printer_id)
+                elif item.target_model:
+                    # Model-based assignment - find any idle printer of matching model
+                    printer_id = await self._find_idle_printer_for_model(db, item.target_model, busy_printers)
+                    if printer_id:
+                        # Check condition (previous print success) before assigning
+                        if item.require_previous_success:
+                            if not await self._check_previous_success(db, item):
+                                item.status = "skipped"
+                                item.error_message = "Previous print failed or was aborted"
+                                item.completed_at = datetime.now()
+                                await db.commit()
+                                logger.info(f"Skipped queue item {item.id} - previous print failed")
+                                continue
+
+                        # Assign printer and start
+                        item.printer_id = printer_id
+                        logger.info(f"Model-based assignment: queue item {item.id} assigned to printer {printer_id}")
+                        await self._start_print(db, item)
+                        busy_printers.add(printer_id)
+
+    async def _find_idle_printer_for_model(self, db: AsyncSession, model: str, exclude_ids: set[int]) -> int | None:
+        """Find an idle, connected printer matching the model.
+
+        Args:
+            db: Database session
+            model: Printer model to match (e.g., "X1C", "P1S")
+            exclude_ids: Printer IDs to exclude (already busy)
+
+        Returns:
+            Printer ID if found, None otherwise
+        """
+        result = await db.execute(
+            select(Printer).where(Printer.model == model).where(Printer.is_active == True)  # noqa: E712
+        )
+        for printer in result.scalars().all():
+            if printer.id not in exclude_ids:
+                if self._is_printer_idle(printer.id) and printer_manager.is_connected(printer.id):
+                    return printer.id
+        return None
 
     def _is_printer_idle(self, printer_id: int) -> bool:
         """Check if a printer is connected and idle."""
