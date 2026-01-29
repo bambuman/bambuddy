@@ -35,7 +35,6 @@ import {
   Printer,
   Pencil,
   Play,
-  ImageIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type {
@@ -822,10 +821,9 @@ interface FileCardProps {
   onAddToQueue?: (id: number) => void;
   onPrint?: (file: LibraryFileListItem) => void;
   onRename?: (file: LibraryFileListItem) => void;
-  onRegenerateThumbnail?: (id: number) => void;
 }
 
-function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQueue, onPrint, onRename, onRegenerateThumbnail }: FileCardProps) {
+function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQueue, onPrint, onRename }: FileCardProps) {
   const [showActions, setShowActions] = useState(false);
 
   return (
@@ -924,15 +922,6 @@ function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQue
                 >
                   <Pencil className="w-3.5 h-3.5" />
                   Rename
-                </button>
-              )}
-              {onRegenerateThumbnail && ['stl', '3mf', 'gcode'].includes(file.file_type.toLowerCase()) && (
-                <button
-                  className="w-full px-3 py-1.5 text-left text-sm text-white hover:bg-bambu-dark flex items-center gap-2"
-                  onClick={() => { onRegenerateThumbnail(file.id); setShowActions(false); }}
-                >
-                  <ImageIcon className="w-3.5 h-3.5" />
-                  Regenerate Thumbnail
                 </button>
               )}
               <button
@@ -1223,30 +1212,6 @@ export function FileManagerPage() {
     },
   });
 
-  const regenerateThumbnailMutation = useMutation({
-    mutationFn: (fileId: number) => api.regenerateFileThumbnail(fileId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['library-files'] });
-      showToast('Thumbnail regenerated', 'success');
-    },
-    onError: (error: Error) => showToast(error.message, 'error'),
-  });
-
-  const batchGenerateThumbnailsMutation = useMutation({
-    mutationFn: () => api.batchGenerateStlThumbnails({ all_missing: true }),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['library-files'] });
-      if (result.succeeded > 0) {
-        showToast(`Generated ${result.succeeded} thumbnail${result.succeeded > 1 ? 's' : ''}${result.failed > 0 ? `, ${result.failed} failed` : ''}`, 'success');
-      } else if (result.processed === 0) {
-        showToast('No STL files missing thumbnails', 'success');
-      } else {
-        showToast(`Failed to generate thumbnails: ${result.results[0]?.error || 'Unknown error'}`, 'error');
-      }
-    },
-    onError: (error: Error) => showToast(error.message, 'error'),
-  });
-
   // Helper to check if a file is sliced (printable)
   const isSlicedFile = useCallback((filename: string) => {
     const lower = filename.toLowerCase();
@@ -1351,19 +1316,6 @@ export function FileManagerPage() {
           <Button onClick={() => setShowUploadModal(true)}>
             <Upload className="w-4 h-4 mr-2" />
             Upload
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => batchGenerateThumbnailsMutation.mutate()}
-            disabled={batchGenerateThumbnailsMutation.isPending}
-            title="Generate thumbnails for STL files that don't have one"
-          >
-            {batchGenerateThumbnailsMutation.isPending ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <ImageIcon className="w-4 h-4 mr-2" />
-            )}
-            {batchGenerateThumbnailsMutation.isPending ? 'Generating...' : 'Generate Thumbnails'}
           </Button>
         </div>
       </div>
@@ -1652,7 +1604,6 @@ export function FileManagerPage() {
                     onAddToQueue={(id) => addToQueueMutation.mutate([id])}
                     onPrint={setPrintFile}
                     onRename={(f) => setRenameItem({ type: 'file', id: f.id, name: f.filename })}
-                    onRegenerateThumbnail={(id) => regenerateThumbnailMutation.mutate(id)}
                   />
                 ))}
               </div>
@@ -1769,16 +1720,6 @@ export function FileManagerPage() {
                       >
                         <Pencil className="w-4 h-4" />
                       </button>
-                      {['stl', '3mf', 'gcode'].includes(file.file_type.toLowerCase()) && (
-                        <button
-                          onClick={() => regenerateThumbnailMutation.mutate(file.id)}
-                          className="p-1.5 rounded hover:bg-bambu-dark text-bambu-gray hover:text-white transition-colors"
-                          title="Regenerate Thumbnail"
-                          disabled={regenerateThumbnailMutation.isPending}
-                        >
-                          <ImageIcon className="w-4 h-4" />
-                        </button>
-                      )}
                       <button
                         onClick={() => setDeleteConfirm({ type: 'file', id: file.id })}
                         className="p-1.5 rounded hover:bg-bambu-dark text-bambu-gray hover:text-red-400 transition-colors"
