@@ -2366,14 +2366,22 @@ async def reprint_archive(
     # Get FTP retry settings
     ftp_retry_enabled, ftp_retry_count, ftp_retry_delay, ftp_timeout = await get_ftp_retry_settings()
 
+    logger.info(
+        f"Reprint FTP upload starting: printer={printer.name} ({printer.model}), "
+        f"ip={printer.ip_address}, file={remote_filename}, local_path={file_path}, "
+        f"retry_enabled={ftp_retry_enabled}, retry_count={ftp_retry_count}, timeout={ftp_timeout}"
+    )
+
     # Delete existing file if present (avoids 553 error)
-    await delete_file_async(
+    logger.debug(f"Deleting existing file {remote_path} if present...")
+    delete_result = await delete_file_async(
         printer.ip_address,
         printer.access_code,
         remote_path,
         socket_timeout=ftp_timeout,
         printer_model=printer.model,
     )
+    logger.debug(f"Delete result: {delete_result}")
 
     if ftp_retry_enabled:
         uploaded = await with_ftp_retry(
@@ -2399,7 +2407,16 @@ async def reprint_archive(
         )
 
     if not uploaded:
-        raise HTTPException(500, "Failed to upload file to printer")
+        logger.error(
+            f"FTP upload failed for reprint: printer={printer.name}, model={printer.model}, "
+            f"ip={printer.ip_address}, file={remote_filename}. "
+            "Check logs above for storage diagnostics and specific error codes."
+        )
+        raise HTTPException(
+            500,
+            "Failed to upload file to printer. Check if SD card is inserted and properly formatted (FAT32/exFAT). "
+            "See server logs for detailed diagnostics.",
+        )
 
     # Register this as an expected print so we don't create a duplicate archive
     register_expected_print(printer_id, remote_filename, archive_id)
