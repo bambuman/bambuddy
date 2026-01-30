@@ -5,6 +5,14 @@ All notable changes to Bambuddy will be documented in this file.
 ## [0.1.6-final] - Not released
 
 ### New Features
+- **Streaming Overlay for OBS** - Embeddable overlay page for live streaming with camera and print status (Issue #164):
+  - All-in-one page at `/overlay/:printerId` combining camera feed with status overlay
+  - Real-time print progress, ETA, layer count, and filename display
+  - Bambuddy logo branding (links to GitHub)
+  - Customizable via query parameters: `?size=small|medium|large` and `?show=progress,layers,eta,filename,status,printer`
+  - No authentication required - designed for OBS browser source embedding
+  - Gradient overlay at bottom for readable text over camera feed
+  - Auto-reconnect on camera stream errors
 - **Disable Printer Firmware Checks** - New toggle in Settings → General → Updates to disable printer firmware update checks:
   - Prevents Bambuddy from checking Bambu Lab servers for firmware updates
   - Useful for users who prefer to manage firmware manually or have network restrictions
