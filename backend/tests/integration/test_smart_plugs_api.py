@@ -573,3 +573,200 @@ class TestSmartPlugsAPI:
 
         assert response.status_code == 400
         assert "not configured" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_create_homeassistant_script_plug(self, async_client: AsyncClient):
+        """Verify Home Assistant script entity can be created as a plug.
+
+        Scripts allow users to trigger HA automations that control multiple devices
+        (e.g., turn on printer + fan together). Scripts can only be triggered (turn_on),
+        not turned off.
+        """
+        data = {
+            "name": "Turn On Printer Setup",
+            "plug_type": "homeassistant",
+            "ha_entity_id": "script.turn_on_printer_and_fan",
+            "enabled": True,
+            "auto_on": True,
+            "auto_off": False,  # Scripts don't support auto_off
+        }
+
+        response = await async_client.post("/api/v1/smart-plugs/", json=data)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["name"] == "Turn On Printer Setup"
+        assert result["plug_type"] == "homeassistant"
+        assert result["ha_entity_id"] == "script.turn_on_printer_and_fan"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_control_homeassistant_script(
+        self, async_client: AsyncClient, smart_plug_factory, mock_homeassistant_service, db_session
+    ):
+        """Verify HA script entity can be triggered via control endpoint."""
+        plug = await smart_plug_factory(plug_type="homeassistant", ha_entity_id="script.turn_on_printer")
+
+        # Scripts use "on" action to trigger
+        response = await async_client.post(f"/api/v1/smart-plugs/{plug.id}/control", json={"action": "on"})
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["success"] is True
+        assert result["action"] == "on"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_invalid_ha_entity_domain(self, async_client: AsyncClient):
+        """Verify invalid HA entity domains are rejected."""
+        data = {
+            "name": "Invalid Entity",
+            "plug_type": "homeassistant",
+            "ha_entity_id": "sensor.some_sensor",  # sensor domain not allowed
+            "enabled": True,
+        }
+
+        response = await async_client.post("/api/v1/smart-plugs/", json=data)
+
+        assert response.status_code == 422  # Validation error
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_script_can_coexist_with_regular_plug(
+        self, async_client: AsyncClient, smart_plug_factory, printer_factory, db_session
+    ):
+        """Verify HA scripts can be assigned to printers that already have a regular plug.
+
+        Scripts are for multi-device control (e.g., turn on printer + fan together),
+        so they should coexist with the main power plug.
+        """
+        # Create a printer
+        printer = await printer_factory(name="Test Printer")
+
+        # Create a regular Tasmota plug assigned to the printer
+        main_plug = await smart_plug_factory(
+            name="Main Power Plug",
+            plug_type="tasmota",
+            ip_address="192.168.1.100",
+            printer_id=printer.id,
+        )
+        assert main_plug.printer_id == printer.id
+
+        # Now try to create a script also assigned to the same printer
+        script_data = {
+            "name": "Turn On Everything",
+            "plug_type": "homeassistant",
+            "ha_entity_id": "script.turn_on_printer_setup",
+            "printer_id": printer.id,
+            "enabled": True,
+        }
+
+        response = await async_client.post("/api/v1/smart-plugs/", json=script_data)
+
+        # Should succeed - scripts can coexist with regular plugs
+        assert response.status_code == 200
+        result = response.json()
+        assert result["printer_id"] == printer.id
+        assert result["ha_entity_id"] == "script.turn_on_printer_setup"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_regular_plug_blocked_when_another_exists(
+        self, async_client: AsyncClient, smart_plug_factory, printer_factory, db_session
+    ):
+        """Verify regular plugs cannot be assigned if printer already has one."""
+        # Create a printer
+        printer = await printer_factory(name="Test Printer")
+
+        # Create a regular plug assigned to the printer
+        await smart_plug_factory(
+            name="Main Power Plug",
+            plug_type="tasmota",
+            ip_address="192.168.1.100",
+            printer_id=printer.id,
+        )
+
+        # Try to create another regular plug for the same printer
+        another_plug = {
+            "name": "Second Plug",
+            "plug_type": "homeassistant",
+            "ha_entity_id": "switch.another_plug",
+            "printer_id": printer.id,
+            "enabled": True,
+        }
+
+        response = await async_client.post("/api/v1/smart-plugs/", json=another_plug)
+
+        # Should fail - only one regular plug per printer
+        assert response.status_code == 400
+        assert "already has a smart plug" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_get_scripts_by_printer_filters_by_show_on_printer_card(
+        self, async_client: AsyncClient, smart_plug_factory, printer_factory, db_session
+    ):
+        """Verify scripts endpoint only returns scripts with show_on_printer_card=True."""
+        printer = await printer_factory(name="Test Printer")
+
+        # Create a script with show_on_printer_card=True (default)
+        visible_script = await smart_plug_factory(
+            name="Visible Script",
+            plug_type="homeassistant",
+            ha_entity_id="script.visible_script",
+            printer_id=printer.id,
+            show_on_printer_card=True,
+        )
+
+        # Create a script with show_on_printer_card=False
+        await smart_plug_factory(
+            name="Hidden Script",
+            plug_type="homeassistant",
+            ha_entity_id="script.hidden_script",
+            printer_id=printer.id,
+            show_on_printer_card=False,
+        )
+
+        response = await async_client.get(f"/api/v1/smart-plugs/by-printer/{printer.id}/scripts")
+
+        assert response.status_code == 200
+        scripts = response.json()
+        # Should only return the visible script
+        assert len(scripts) == 1
+        assert scripts[0]["id"] == visible_script.id
+        assert scripts[0]["name"] == "Visible Script"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_script_auto_on_auto_off_fields(
+        self, async_client: AsyncClient, smart_plug_factory, printer_factory, db_session
+    ):
+        """Verify scripts can have auto_on and auto_off set for automation triggers."""
+        printer = await printer_factory(name="Test Printer")
+
+        # Create a script with custom auto_on/auto_off settings
+        script_data = {
+            "name": "Fan Control Script",
+            "plug_type": "homeassistant",
+            "ha_entity_id": "script.fan_control",
+            "printer_id": printer.id,
+            "auto_on": True,
+            "auto_off": False,
+            "show_on_printer_card": True,
+        }
+
+        response = await async_client.post("/api/v1/smart-plugs/", json=script_data)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["auto_on"] is True
+        assert result["auto_off"] is False
+        assert result["show_on_printer_card"] is True
+
+        # Update the script's auto_off setting
+        update_response = await async_client.patch(f"/api/v1/smart-plugs/{result['id']}", json={"auto_off": True})
+
+        assert update_response.status_code == 200
+        updated = update_response.json()
+        assert updated["auto_off"] is True

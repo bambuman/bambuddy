@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
-import { X, Save, Loader2, Wifi, WifiOff, CheckCircle, Bell, Clock, LayoutGrid, Search, Plug, Power, Home } from 'lucide-react';
+import { X, Save, Loader2, Wifi, WifiOff, CheckCircle, Bell, Clock, LayoutGrid, Search, Plug, Power, Home, Play, Eye } from 'lucide-react';
 import { api } from '../api/client';
 import type { SmartPlug, SmartPlugCreate, SmartPlugUpdate, DiscoveredTasmotaDevice } from '../api/client';
 import { Button } from './Button';
@@ -51,6 +51,10 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
   const [testResult, setTestResult] = useState<{ success: boolean; state?: string | null; device_name?: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Automation settings
+  const [autoOn, setAutoOn] = useState(plug?.auto_on ?? true);
+  const [autoOff, setAutoOff] = useState(plug?.auto_off ?? true);
+
   // Power alert settings
   const [powerAlertEnabled, setPowerAlertEnabled] = useState(plug?.power_alert_enabled || false);
   const [powerAlertHigh, setPowerAlertHigh] = useState<string>(plug?.power_alert_high?.toString() || '');
@@ -61,8 +65,9 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
   const [scheduleOnTime, setScheduleOnTime] = useState<string>(plug?.schedule_on_time || '');
   const [scheduleOffTime, setScheduleOffTime] = useState<string>(plug?.schedule_off_time || '');
 
-  // Switchbar visibility
+  // Visibility options
   const [showInSwitchbar, setShowInSwitchbar] = useState(plug?.show_in_switchbar || false);
+  const [showOnPrinterCard, setShowOnPrinterCard] = useState(plug?.show_on_printer_card ?? true);
 
   // Discovery state
   const [isScanning, setIsScanning] = useState(false);
@@ -235,6 +240,10 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
     mutationFn: (data: SmartPlugCreate) => api.createSmartPlug(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['smart-plugs'] });
+      // Also invalidate script plugs queries for printer cards
+      queryClient.invalidateQueries({ predicate: (query) =>
+        Array.isArray(query.queryKey) && query.queryKey[0] === 'scriptPlugsByPrinter'
+      });
       onClose();
     },
     onError: (err: Error) => {
@@ -247,6 +256,10 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
     mutationFn: (data: SmartPlugUpdate) => api.updateSmartPlug(plug!.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['smart-plugs'] });
+      // Also invalidate script plugs queries for printer cards
+      queryClient.invalidateQueries({ predicate: (query) =>
+        Array.isArray(query.queryKey) && query.queryKey[0] === 'scriptPlugsByPrinter'
+      });
       onClose();
     },
     onError: (err: Error) => {
@@ -254,11 +267,17 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
     },
   });
 
+  // Check if selected entity is a script (scripts allow multiple plugs per printer)
+  const isScript = plugType === 'homeassistant' && haEntityId?.startsWith('script.');
+
   // Filter out printers that already have a plug assigned (except current plug's printer)
-  const availablePrinters = printers?.filter(p => {
-    const hasPlug = existingPlugs?.some(ep => ep.printer_id === p.id && ep.id !== plug?.id);
-    return !hasPlug;
-  });
+  // Scripts can link to any printer (they're for multi-device control)
+  const availablePrinters = isScript
+    ? printers
+    : printers?.filter(p => {
+        const hasPlug = existingPlugs?.some(ep => ep.printer_id === p.id && ep.id !== plug?.id);
+        return !hasPlug;
+      });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -291,6 +310,9 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
       username: plugType === 'tasmota' ? (username.trim() || null) : null,
       password: plugType === 'tasmota' ? (password.trim() || null) : null,
       printer_id: printerId,
+      // Automation
+      auto_on: autoOn,
+      auto_off: autoOff,
       // Power alerts
       power_alert_enabled: powerAlertEnabled,
       power_alert_high: powerAlertHigh ? parseFloat(powerAlertHigh) : null,
@@ -299,8 +321,9 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
       schedule_enabled: scheduleEnabled,
       schedule_on_time: scheduleOnTime || null,
       schedule_off_time: scheduleOffTime || null,
-      // Switchbar
+      // Visibility options
       show_in_switchbar: showInSwitchbar,
+      show_on_printer_card: showOnPrinterCard,
     };
 
     if (isEditing) {
@@ -582,15 +605,15 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
                         <p className="text-xs text-bambu-gray mt-1">
                           {debouncedSearch
                             ? `Searching all entities (${availableEntities.length} found)`
-                            : `Showing switch, light, input_boolean (${availableEntities.length} available)`}
+                            : `Showing switch, light, input_boolean, script (${availableEntities.length} available)`}
                         </p>
                       </div>
                     );
                   })()}
 
 
-                  {/* Energy Monitoring Section (Optional) */}
-                  {haEntityId && haSensorEntities && haSensorEntities.length > 0 && (
+                  {/* Energy Monitoring Section (Optional) - hidden for scripts */}
+                  {haEntityId && !isScript && haSensorEntities && haSensorEntities.length > 0 && (
                     <div className="border-t border-bambu-dark-tertiary pt-4 mt-4 space-y-3">
                       <div>
                         <p className="text-white font-medium mb-1">Energy Monitoring (Optional)</p>
@@ -975,110 +998,183 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
               ))}
             </select>
             <p className="text-xs text-bambu-gray mt-1">
-              Linking enables automatic on/off when prints start/complete
+              {isScript
+                ? 'Link to a printer to enable auto-run triggers'
+                : 'Linking enables automatic on/off when prints start/complete'}
             </p>
           </div>
 
-          {/* Power Alerts */}
-          <div className="border-t border-bambu-dark-tertiary pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Bell className="w-4 h-4 text-bambu-green" />
-                <span className="text-white font-medium">Power Alerts</span>
+          {/* Script Options - only show for HA scripts */}
+          {isScript && (
+            <div className="border-t border-bambu-dark-tertiary pt-4 space-y-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Play className="w-4 h-4 text-bambu-green" />
+                <span className="text-white font-medium">Script Automation</span>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={powerAlertEnabled}
-                  onChange={(e) => setPowerAlertEnabled(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
-              </label>
+
+              {/* Auto-run when printer turns on */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-white">Run when printer turns on</span>
+                  <p className="text-xs text-bambu-gray">Execute script when main plug is switched on</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoOn}
+                    onChange={(e) => setAutoOn(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
+                </label>
+              </div>
+
+              {/* Auto-run when printer turns off */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-white">Run when printer turns off</span>
+                  <p className="text-xs text-bambu-gray">Execute script when main plug is switched off</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoOff}
+                    onChange={(e) => setAutoOff(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
+                </label>
+              </div>
             </div>
-            {powerAlertEnabled && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm text-bambu-gray mb-1">Alert if above (W)</label>
-                    <input
-                      type="number"
-                      value={powerAlertHigh}
-                      onChange={(e) => setPowerAlertHigh(e.target.value)}
-                      placeholder="e.g. 200"
-                      min="0"
-                      max="5000"
-                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                    />
+          )}
+
+          {/* Power Alerts - hidden for scripts (no power monitoring) */}
+          {!isScript && (
+            <div className="border-t border-bambu-dark-tertiary pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-bambu-green" />
+                  <span className="text-white font-medium">Power Alerts</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={powerAlertEnabled}
+                    onChange={(e) => setPowerAlertEnabled(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
+                </label>
+              </div>
+              {powerAlertEnabled && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-bambu-gray mb-1">Alert if above (W)</label>
+                      <input
+                        type="number"
+                        value={powerAlertHigh}
+                        onChange={(e) => setPowerAlertHigh(e.target.value)}
+                        placeholder="e.g. 200"
+                        min="0"
+                        max="5000"
+                        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-bambu-gray mb-1">Alert if below (W)</label>
+                      <input
+                        type="number"
+                        value={powerAlertLow}
+                        onChange={(e) => setPowerAlertLow(e.target.value)}
+                        placeholder="e.g. 10"
+                        min="0"
+                        max="5000"
+                        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                      />
+                    </div>
                   </div>
+                  <p className="text-xs text-bambu-gray">
+                    Get notified when power consumption crosses these thresholds. Leave empty to disable that direction.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Schedule - hidden for scripts */}
+          {!isScript && (
+            <div className="border-t border-bambu-dark-tertiary pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-bambu-green" />
+                  <span className="text-white font-medium">Daily Schedule</span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={scheduleEnabled}
+                    onChange={(e) => setScheduleEnabled(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
+                </label>
+              </div>
+              {scheduleEnabled && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-bambu-gray mb-1">Turn On at</label>
+                      <input
+                        type="time"
+                        value={scheduleOnTime}
+                        onChange={(e) => setScheduleOnTime(e.target.value)}
+                        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-bambu-gray mb-1">Turn Off at</label>
+                      <input
+                        type="time"
+                        value={scheduleOffTime}
+                        onChange={(e) => setScheduleOffTime(e.target.value)}
+                        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-bambu-gray">
+                    Automatically turn the plug on/off at these times daily. Leave empty to skip that action.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Visibility Options */}
+          <div className="border-t border-bambu-dark-tertiary pt-4 space-y-4">
+            {/* Show on printer card - only for scripts */}
+            {isScript && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-bambu-green" />
                   <div>
-                    <label className="block text-sm text-bambu-gray mb-1">Alert if below (W)</label>
-                    <input
-                      type="number"
-                      value={powerAlertLow}
-                      onChange={(e) => setPowerAlertLow(e.target.value)}
-                      placeholder="e.g. 10"
-                      min="0"
-                      max="5000"
-                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                    />
+                    <span className="text-white font-medium">Show on Printer Card</span>
+                    <p className="text-xs text-bambu-gray">Display script button on printer card</p>
                   </div>
                 </div>
-                <p className="text-xs text-bambu-gray">
-                  Get notified when power consumption crosses these thresholds. Leave empty to disable that direction.
-                </p>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showOnPrinterCard}
+                    onChange={(e) => setShowOnPrinterCard(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
+                </label>
               </div>
             )}
-          </div>
 
-          {/* Schedule */}
-          <div className="border-t border-bambu-dark-tertiary pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-bambu-green" />
-                <span className="text-white font-medium">Daily Schedule</span>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={scheduleEnabled}
-                  onChange={(e) => setScheduleEnabled(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-bambu-dark-tertiary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-bambu-green"></div>
-              </label>
-            </div>
-            {scheduleEnabled && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm text-bambu-gray mb-1">Turn On at</label>
-                    <input
-                      type="time"
-                      value={scheduleOnTime}
-                      onChange={(e) => setScheduleOnTime(e.target.value)}
-                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-bambu-gray mb-1">Turn Off at</label>
-                    <input
-                      type="time"
-                      value={scheduleOffTime}
-                      onChange={(e) => setScheduleOffTime(e.target.value)}
-                      className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                    />
-                  </div>
-                </div>
-                <p className="text-xs text-bambu-gray">
-                  Automatically turn the plug on/off at these times daily. Leave empty to skip that action.
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Switchbar Visibility */}
-          <div className="border-t border-bambu-dark-tertiary pt-4">
+            {/* Show in Switchbar */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <LayoutGrid className="w-4 h-4 text-bambu-green" />

@@ -195,6 +195,11 @@ class SmartPlugManager:
             logger.debug(f"Smart plug '{plug.name}' auto_off is disabled")
             return
 
+        # Skip auto-off for HA script entities (scripts can only be triggered, not turned off)
+        if plug.plug_type == "homeassistant" and plug.ha_entity_id and plug.ha_entity_id.startswith("script."):
+            logger.debug(f"Smart plug '{plug.name}' is a HA script entity, skipping auto-off")
+            return
+
         # Only auto-off on successful completion, not on failures
         # This allows the user to investigate errors before power-off
         if status != "completed":

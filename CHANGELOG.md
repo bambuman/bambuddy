@@ -5,6 +5,13 @@ All notable changes to Bambuddy will be documented in this file.
 ## [0.1.6-final] - Not released
 
 ### New Features
+- **Home Assistant Script Support** - Control multiple devices together using HA scripts (Issue #176):
+  - Add HA script entities (e.g., `script.turn_on_printer_setup`) as smart plugs
+  - Trigger scripts to control printer + enclosure fan + other devices simultaneously
+  - Scripts show "Run" button instead of On/Off (scripts execute once when triggered)
+  - Script automation: Run scripts automatically when main printer plug turns on/off
+  - Show/hide scripts on printer cards (configurable per script)
+  - Scripts appear in dedicated row on printer cards with quick-run buttons
 - **Disable Printer Firmware Checks** - New toggle in Settings → General → Updates to disable printer firmware update checks:
   - Prevents Bambuddy from checking Bambu Lab servers for firmware updates
   - Useful for users who prefer to manage firmware manually or have network restrictions
