@@ -2688,12 +2688,12 @@ function PrinterCard({
 
         {/* Connection Info & Actions - hidden in compact mode */}
         {viewMode === 'expanded' && (
-          <div className="mt-4 pt-4 border-t border-bambu-dark-tertiary flex items-center justify-between">
+          <div className="mt-4 pt-4 border-t border-bambu-dark-tertiary flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="text-xs text-bambu-gray">
               <p>{printer.ip_address}</p>
               <p className="truncate">{printer.serial_number}</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {/* Chamber Light Toggle */}
               <Button
                 variant="secondary"
