@@ -2,7 +2,7 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
-## [0.1.6-final] - Not released
+## [0.1.6-final] - 2026-01-31
 
 ### New Features
 - **Group-Based Permissions** - Granular access control with user groups:

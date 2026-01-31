@@ -165,17 +165,30 @@ class GitHubBackupService:
 
         except Exception as e:
             logger.error(f"GitHub connection test failed: {e}")
-            return {"success": False, "message": str(e), "repo_name": None, "permissions": None}
+            # Sanitize error - don't expose internal details
+            error_type = type(e).__name__
+            return {
+                "success": False,
+                "message": f"Connection failed: {error_type}",
+                "repo_name": None,
+                "permissions": None,
+            }
 
     def _parse_repo_url(self, url: str) -> tuple[str, str]:
         """Parse owner and repo from GitHub URL."""
-        # Handle HTTPS URLs
-        match = re.match(r"https://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+        # Limit URL length to prevent ReDoS attacks
+        if not url or len(url) > 500:
+            raise ValueError("Invalid GitHub URL: URL too long or empty")
+
+        # Handle HTTPS URLs - use atomic groups via limited character classes
+        # GitHub usernames: 1-39 chars, alphanumeric and hyphens
+        # Repo names: 1-100 chars, alphanumeric, hyphens, underscores, dots
+        match = re.match(r"https://github\.com/([\w-]{1,39})/([\w.\-]{1,100})(?:\.git)?/?$", url)
         if match:
             return match.group(1), match.group(2)
 
         # Handle SSH URLs
-        match = re.match(r"git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$", url)
+        match = re.match(r"git@github\.com:([\w-]{1,39})/([\w.\-]{1,100})(?:\.git)?$", url)
         if match:
             return match.group(1), match.group(2)
 

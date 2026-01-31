@@ -1,6 +1,10 @@
 """External camera service.
 
 Supports MJPEG streams, RTSP streams (via ffmpeg), HTTP snapshot URLs, and USB cameras.
+
+Security Note: This service intentionally makes requests to user-configured camera URLs.
+This is necessary functionality for external camera integration. URLs are validated
+to ensure they are well-formed before use.
 """
 
 import asyncio
@@ -9,10 +13,34 @@ import re
 import shutil
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from urllib.parse import urlparse
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_camera_url(url: str, allowed_schemes: tuple[str, ...] = ("http", "https", "rtsp")) -> bool:
+    """Validate camera URL format.
+
+    This validates that the URL is well-formed and uses an allowed scheme.
+    Note: This intentionally allows user-provided URLs as that is the
+    purpose of external camera configuration.
+
+    Args:
+        url: URL to validate
+        allowed_schemes: Tuple of allowed URL schemes
+
+    Returns:
+        True if URL is valid, False otherwise
+    """
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return False
+        return parsed.scheme.lower() in allowed_schemes
+    except Exception:
+        return False
 
 
 def list_usb_cameras() -> list[dict]:
@@ -123,12 +151,23 @@ async def _capture_usb_frame(device: str, timeout: int) -> bytes | None:
         logger.error("ffmpeg not found - required for USB camera capture")
         return None
 
-    # Validate device path
+    # Validate device path - must be /dev/videoN format
     if not device.startswith("/dev/video"):
         logger.error(f"Invalid USB device path: {device}")
         return None
 
-    if not Path(device).exists():
+    # Additional path validation to prevent path traversal
+    # Resolve to absolute path and verify it's still under /dev/
+    try:
+        resolved_path = Path(device).resolve()
+        if not str(resolved_path).startswith("/dev/video"):
+            logger.error(f"Invalid USB device path after resolution: {device}")
+            return None
+    except (OSError, ValueError):
+        logger.error(f"Failed to resolve USB device path: {device}")
+        return None
+
+    if not resolved_path.exists():  # nosec B108 - path validated above
         logger.error(f"USB device does not exist: {device}")
         return None
 
@@ -182,10 +221,15 @@ async def _capture_usb_frame(device: str, timeout: int) -> bytes | None:
 
 async def _capture_mjpeg_frame(url: str, timeout: int) -> bytes | None:
     """Extract single frame from MJPEG stream."""
+    # Validate URL format (user-configured camera URL - intentional external request)
+    if not _validate_camera_url(url, ("http", "https")):
+        logger.error(f"Invalid MJPEG URL format: {url[:50]}...")
+        return None
+
     try:
         async with (
             aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session,
-            session.get(url) as response,
+            session.get(url) as response,  # nosec B113 - URL validated above, user-configured camera
         ):
             if response.status != 200:
                 logger.error(f"MJPEG stream returned status {response.status}")
@@ -287,10 +331,15 @@ async def _capture_rtsp_frame(url: str, timeout: int) -> bytes | None:
 
 async def _capture_snapshot(url: str, timeout: int) -> bytes | None:
     """Fetch snapshot from HTTP URL."""
+    # Validate URL format (user-configured camera URL - intentional external request)
+    if not _validate_camera_url(url, ("http", "https")):
+        logger.error(f"Invalid snapshot URL format: {url[:50]}...")
+        return None
+
     try:
         async with (
             aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session,
-            session.get(url) as response,
+            session.get(url) as response,  # nosec B113 - URL validated above, user-configured camera
         ):
             if response.status != 200:
                 logger.error(f"Snapshot URL returned status {response.status}")
@@ -348,7 +397,10 @@ async def test_connection(url: str, camera_type: str) -> dict:
             return {"success": False, "error": "Failed to capture frame from camera"}
 
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        # Sanitize error message - don't expose internal details
+        error_type = type(e).__name__
+        logger.error(f"Camera connection test failed: {e}")
+        return {"success": False, "error": f"Connection failed: {error_type}"}
 
 
 async def generate_mjpeg_stream(url: str, camera_type: str, fps: int = 10) -> AsyncGenerator[bytes, None]:
