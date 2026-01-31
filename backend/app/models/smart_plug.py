@@ -24,10 +24,8 @@ class SmartPlug(Base):
     ha_energy_today_entity: Mapped[str | None] = mapped_column(String(100), nullable=True)  # sensor.xxx_today
     ha_energy_total_entity: Mapped[str | None] = mapped_column(String(100), nullable=True)  # sensor.xxx_total
 
-    # Link to printer (1:1)
-    printer_id: Mapped[int | None] = mapped_column(
-        ForeignKey("printers.id", ondelete="SET NULL"), unique=True, nullable=True
-    )
+    # Link to printer (scripts can coexist with regular plugs for multi-device control)
+    printer_id: Mapped[int | None] = mapped_column(ForeignKey("printers.id", ondelete="SET NULL"), nullable=True)
 
     # Automation settings
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -54,8 +52,9 @@ class SmartPlug(Base):
     schedule_on_time: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "HH:MM" format
     schedule_off_time: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "HH:MM" format
 
-    # Switchbar visibility
+    # Visibility options
     show_in_switchbar: Mapped[bool] = mapped_column(Boolean, default=False)
+    show_on_printer_card: Mapped[bool] = mapped_column(Boolean, default=True)  # For scripts: show on printer card
 
     # Status tracking
     last_state: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "ON"/"OFF"

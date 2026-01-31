@@ -17,7 +17,7 @@ from backend.app.models.smart_plug import SmartPlug
 from backend.app.services.bambu_ftp import delete_file_async, get_ftp_retry_settings, upload_file_async, with_ftp_retry
 from backend.app.services.notification_service import notification_service
 from backend.app.services.printer_manager import printer_manager
-from backend.app.services.tasmota import tasmota_service
+from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.utils.printer_models import normalize_printer_model
 
 logger = logging.getLogger(__name__)
@@ -348,15 +348,18 @@ class PrintScheduler:
 
         Returns True if printer connected successfully within timeout.
         """
+        # Get the appropriate service for the plug type (Tasmota or Home Assistant)
+        service = await smart_plug_manager.get_service_for_plug(plug, db)
+
         # Check current plug state
-        status = await tasmota_service.get_status(plug)
+        status = await service.get_status(plug)
         if not status.get("reachable"):
             logger.warning(f"Smart plug '{plug.name}' is not reachable")
             return False
 
         # Turn on if not already on
         if status.get("state") != "ON":
-            success = await tasmota_service.turn_on(plug)
+            success = await service.turn_on(plug)
             if not success:
                 logger.warning(f"Failed to turn on smart plug '{plug.name}'")
                 return False
@@ -425,7 +428,8 @@ class PrintScheduler:
             # Wait for cooldown (up to 10 minutes)
             await printer_manager.wait_for_cooldown(item.printer_id, target_temp=50.0, timeout=600)
             logger.info(f"Auto-off: Powering off printer {item.printer_id}")
-            await tasmota_service.turn_off(plug)
+            service = await smart_plug_manager.get_service_for_plug(plug, db)
+            await service.turn_off(plug)
 
     async def _get_job_name(self, db: AsyncSession, item: PrintQueueItem) -> str:
         """Get a human-readable name for a queue item."""

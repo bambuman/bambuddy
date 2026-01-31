@@ -1660,7 +1660,7 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-bambu-gray">
-                Connect to Home Assistant to control smart plugs via HA's REST API. Supports switch, light, and input_boolean entities.
+                Connect to Home Assistant to control smart plugs via HA's REST API. Supports switch, light, input_boolean, and script entities.
               </p>
 
               <div className="flex items-center justify-between">

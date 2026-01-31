@@ -347,8 +347,8 @@ describe('FileManagerPage', () => {
       render(<FileManagerPage />);
 
       await waitFor(() => {
-        // Sort dropdown should show Date as default option
-        expect(screen.getByDisplayValue('Date')).toBeInTheDocument();
+        // Sort dropdown should show Name as default option (persisted to localStorage)
+        expect(screen.getByDisplayValue('Name')).toBeInTheDocument();
       });
     });
   });

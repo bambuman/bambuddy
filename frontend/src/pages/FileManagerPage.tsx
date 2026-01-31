@@ -50,6 +50,7 @@ import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { PrintModal } from '../components/PrintModal';
 import { useToast } from '../contexts/ToastContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 type SortField = 'name' | 'date' | 'size' | 'type' | 'prints';
 type SortDirection = 'asc' | 'desc';
@@ -855,6 +856,7 @@ function isSlicedFilename(filename: string): boolean {
 interface FileCardProps {
   file: LibraryFileListItem;
   isSelected: boolean;
+  isMobile: boolean;
   onSelect: (id: number) => void;
   onDelete: (id: number) => void;
   onDownload: (id: number) => void;
@@ -865,7 +867,7 @@ interface FileCardProps {
   thumbnailVersion?: number;
 }
 
-function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQueue, onPrint, onRename, onGenerateThumbnail, thumbnailVersion }: FileCardProps) {
+function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onAddToQueue, onPrint, onRename, onGenerateThumbnail, thumbnailVersion }: FileCardProps) {
   const [showActions, setShowActions] = useState(false);
 
   return (
@@ -921,7 +923,7 @@ function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQue
       </div>
 
       {/* Actions - always visible on mobile, hover on desktop */}
-      <div className="absolute bottom-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+      <div className={`absolute bottom-2 right-2 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} onClick={(e) => e.stopPropagation()}>
         <button
           onClick={() => setShowActions(!showActions)}
           className="p-1.5 rounded bg-bambu-dark-secondary/90 hover:bg-bambu-dark-tertiary"
@@ -991,7 +993,7 @@ function FileCard({ file, isSelected, onSelect, onDelete, onDownload, onAddToQue
       <div className={`absolute top-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
         isSelected
           ? 'bg-bambu-green border-bambu-green'
-          : 'border-white/30 bg-black/30 opacity-100 md:opacity-0 md:group-hover:opacity-100'
+          : `border-white/30 bg-black/30 ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`
       }`}>
         {isSelected && <div className="w-2 h-2 bg-white rounded-sm" />}
       </div>
@@ -1073,11 +1075,20 @@ export function FileManagerPage() {
     };
   }, [isResizing, sidebarWidth]);
 
-  // Filter and sort state
+  // Filter and sort state (persist sort preferences to localStorage)
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
-  const [sortField, setSortField] = useState<SortField>('date');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [sortField, setSortField] = useState<SortField>(() => {
+    const saved = localStorage.getItem('library-sort-field');
+    return (saved as SortField) || 'name';
+  });
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
+    const saved = localStorage.getItem('library-sort-direction');
+    return (saved as SortDirection) || 'asc';
+  });
+
+  // Mobile detection for touch-friendly UI
+  const isMobile = useIsMobile();
 
   // Update selectedFolderId when URL parameter changes (e.g., navigating from Project or Archive page)
   useEffect(() => {
@@ -1420,7 +1431,7 @@ export function FileManagerPage() {
   const isLoading = foldersLoading || filesLoading;
 
   return (
-    <div className="p-4 md:p-8 h-[calc(100vh-64px)] flex flex-col">
+    <div className="p-4 md:p-8 min-h-[calc(100vh-64px)] lg:h-[calc(100vh-64px)] flex flex-col">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
@@ -1630,9 +1641,9 @@ export function FileManagerPage() {
 
         {/* Files area */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {/* Search, Filter, Sort toolbar */}
+          {/* Search, Filter, Sort toolbar - sticky on mobile for easier access */}
           {files && files.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 p-2 sm:p-3 bg-bambu-card rounded-lg border border-bambu-dark-tertiary">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 p-2 sm:p-3 bg-bambu-card rounded-lg border border-bambu-dark-tertiary sticky top-0 z-10 lg:static">
               {/* Search */}
               <div className="relative w-full sm:w-auto sm:flex-1 sm:max-w-xs">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray" />
@@ -1666,17 +1677,25 @@ export function FileManagerPage() {
               <div className="flex items-center gap-2">
                 <select
                   value={sortField}
-                  onChange={(e) => setSortField(e.target.value as SortField)}
+                  onChange={(e) => {
+                    const newField = e.target.value as SortField;
+                    setSortField(newField);
+                    localStorage.setItem('library-sort-field', newField);
+                  }}
                   className="bg-bambu-dark border border-bambu-dark-tertiary rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-bambu-green"
                 >
-                  <option value="date">Date</option>
                   <option value="name">Name</option>
+                  <option value="date">Date</option>
                   <option value="size">Size</option>
                   <option value="type">Type</option>
                   <option value="prints">Prints</option>
                 </select>
                 <button
-                  onClick={() => setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                  onClick={() => setSortDirection((d) => {
+                    const newDir = d === 'asc' ? 'desc' : 'asc';
+                    localStorage.setItem('library-sort-direction', newDir);
+                    return newDir;
+                  })}
                   className="p-1.5 rounded bg-bambu-dark border border-bambu-dark-tertiary hover:border-bambu-green transition-colors"
                   title={sortDirection === 'asc' ? 'Ascending' : 'Descending'}
                 >
@@ -1697,9 +1716,9 @@ export function FileManagerPage() {
             </div>
           )}
 
-          {/* Selection toolbar */}
+          {/* Selection toolbar - sticky on mobile below search bar */}
           {filteredAndSortedFiles.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 mb-4 p-2 bg-bambu-card rounded-lg border border-bambu-dark-tertiary">
+            <div className="flex flex-wrap items-center gap-2 mb-4 p-2 bg-bambu-card rounded-lg border border-bambu-dark-tertiary sticky top-[52px] z-10 lg:static">
               {/* Select all / Deselect all */}
               {selectedFiles.length === filteredAndSortedFiles.length && selectedFiles.length > 0 ? (
                 <Button
@@ -1825,13 +1844,14 @@ export function FileManagerPage() {
               </Button>
             </div>
           ) : viewMode === 'grid' ? (
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 lg:overflow-y-auto">
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
                 {filteredAndSortedFiles.map((file) => (
                   <FileCard
                     key={file.id}
                     file={file}
                     isSelected={selectedFiles.includes(file.id)}
+                    isMobile={isMobile}
                     onSelect={handleFileSelect}
                     onDelete={(id) => setDeleteConfirm({ type: 'file', id })}
                     onDownload={handleDownload}
@@ -1845,10 +1865,10 @@ export function FileManagerPage() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 lg:overflow-y-auto">
               <div className="bg-bambu-card rounded-lg border border-bambu-dark-tertiary overflow-hidden">
-                {/* List header */}
-                <div className="grid grid-cols-[auto_1fr_100px_100px_100px_80px] gap-4 px-4 py-2 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary text-xs text-bambu-gray font-medium">
+                {/* List header - hidden on mobile, show simplified on small screens */}
+                <div className="hidden sm:grid grid-cols-[auto_1fr_100px_100px_100px_80px] gap-4 px-4 py-2 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary text-xs text-bambu-gray font-medium">
                   <div className="w-6" />
                   <div>Name</div>
                   <div>Type</div>

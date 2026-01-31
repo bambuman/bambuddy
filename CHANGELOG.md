@@ -5,6 +5,13 @@ All notable changes to Bambuddy will be documented in this file.
 ## [0.1.6-final] - Not released
 
 ### New Features
+- **Home Assistant Script Support** - Control multiple devices together using HA scripts (Issue #176):
+  - Add HA script entities (e.g., `script.turn_on_printer_setup`) as smart plugs
+  - Trigger scripts to control printer + enclosure fan + other devices simultaneously
+  - Scripts show "Run" button instead of On/Off (scripts execute once when triggered)
+  - Script automation: Run scripts automatically when main printer plug turns on/off
+  - Show/hide scripts on printer cards (configurable per script)
+  - Scripts appear in dedicated row on printer cards with quick-run buttons
 - **STL Thumbnail Generation** - Auto-generate preview thumbnails for STL files (Issue #156):
   - Checkbox option when uploading STL files to generate thumbnails automatically
   - Batch generate thumbnails for existing STL files via "Generate Thumbnails" button
@@ -123,6 +130,15 @@ All notable changes to Bambuddy will be documented in this file.
   - Job Failed: When a job fails to start (enabled by default)
   - Queue Complete: When all queued jobs finish
   - New "Print Queue" section in notification provider settings
+- **Installation Scripts** - Interactive install scripts for Linux and macOS:
+  - Native install (`install.sh`): Python venv, systemd/launchd service, Node.js 22
+  - Docker install (`docker-install.sh`): Docker Compose setup with health checks
+  - Interactive prompts for: install path, port, bind address, timezone, data/log directories
+  - Unattended mode with `--yes` flag for automation
+  - Auto-detects OS and package manager (apt, dnf, pacman, brew)
+  - Option to set system timezone during installation
+  - Shows IP address for network access when binding to 0.0.0.0
+  - Supports updating existing installations
 
 ### Fixes
 - **Multi-Plate Thumbnail in Queue** - Fixed queue items showing wrong thumbnail for multi-plate files (Issue #166):
@@ -164,6 +180,10 @@ All notable changes to Bambuddy will be documented in this file.
   - Tooltip shows full name on hover
 - **K-Profiles Backup Status** - Fixed GitHub backup settings showing incorrect printer connection count (e.g., "1/2 connected" when both printers are connected); now fetches status from API instead of relying on WebSocket cache
 - **GitHub Backup Timestamps** - Removed volatile timestamps from GitHub backup files so git diffs only show actual data changes
+- **Home Assistant Smart Plug Auto-On** - Fixed print scheduler only checking Tasmota plugs when powering on printers for queued prints (Issue #200):
+  - Home Assistant smart plugs now work with automatic printer power-on for scheduled queue jobs
+  - Previously only Tasmota plugs were checked, causing HA plugs to fail with "Tasmota device not found" error
+  - Both `_power_on_and_wait` and `_power_off_if_needed` now use the correct service based on plug type
 
 ### Maintenance
 - Upgraded vitest from 2.x to 3.x to resolve npm audit security vulnerabilities in dev dependencies
