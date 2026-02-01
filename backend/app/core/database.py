@@ -1014,6 +1014,36 @@ async def run_migrations(conn):
     except Exception:
         pass
 
+    # Migration: Convert absolute paths to relative paths in library_files table
+    # This ensures backup/restore portability across different installations
+    try:
+        base_dir_str = str(settings.base_dir)
+        # Ensure we have a trailing slash for clean replacement
+        if not base_dir_str.endswith("/"):
+            base_dir_str += "/"
+
+        # Update file_path - remove base_dir prefix from absolute paths
+        await conn.execute(
+            text("""
+            UPDATE library_files
+            SET file_path = SUBSTR(file_path, LENGTH(:base_dir) + 1)
+            WHERE file_path LIKE :pattern
+        """),
+            {"base_dir": base_dir_str, "pattern": base_dir_str + "%"},
+        )
+
+        # Update thumbnail_path - remove base_dir prefix from absolute paths
+        await conn.execute(
+            text("""
+            UPDATE library_files
+            SET thumbnail_path = SUBSTR(thumbnail_path, LENGTH(:base_dir) + 1)
+            WHERE thumbnail_path LIKE :pattern
+        """),
+            {"base_dir": base_dir_str, "pattern": base_dir_str + "%"},
+        )
+    except Exception:
+        pass
+
 
 async def seed_notification_templates():
     """Seed default notification templates if they don't exist."""

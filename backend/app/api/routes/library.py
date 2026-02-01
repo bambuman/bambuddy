@@ -75,6 +75,30 @@ def get_library_thumbnails_dir() -> Path:
     return thumbnails_dir
 
 
+def to_relative_path(absolute_path: Path | str) -> str:
+    """Convert an absolute path to a path relative to base_dir for storage."""
+    if not absolute_path:
+        return ""
+    abs_path = Path(absolute_path)
+    base_dir = Path(app_settings.base_dir)
+    try:
+        return str(abs_path.relative_to(base_dir))
+    except ValueError:
+        # Path is not under base_dir, return as-is (shouldn't happen normally)
+        return str(abs_path)
+
+
+def to_absolute_path(relative_path: str | None) -> Path | None:
+    """Convert a relative path (from database) to an absolute path for file operations."""
+    if not relative_path:
+        return None
+    # Handle already-absolute paths (for backwards compatibility during migration)
+    path = Path(relative_path)
+    if path.is_absolute():
+        return path
+    return Path(app_settings.base_dir) / relative_path
+
+
 def calculate_file_hash(file_path: Path) -> str:
     """Calculate SHA256 hash of a file."""
     sha256_hash = hashlib.sha256()
@@ -722,15 +746,15 @@ async def upload_file(
             if generate_stl_thumbnails:
                 thumbnail_path = generate_stl_thumbnail(file_path, thumbnails_dir)
 
-        # Create database entry
+        # Create database entry (store relative paths for portability)
         library_file = LibraryFile(
             folder_id=folder_id,
             filename=filename,
-            file_path=str(file_path),
+            file_path=to_relative_path(file_path),
             file_type=file_type,
             file_size=len(content),
             file_hash=file_hash,
-            thumbnail_path=thumbnail_path,
+            thumbnail_path=to_relative_path(thumbnail_path) if thumbnail_path else None,
             file_metadata=metadata if metadata else None,
         )
         db.add(library_file)
@@ -958,15 +982,15 @@ async def extract_zip_file(
                         if generate_stl_thumbnails:
                             thumbnail_path = generate_stl_thumbnail(file_path, thumbnails_dir)
 
-                    # Create database entry
+                    # Create database entry (store relative paths for portability)
                     library_file = LibraryFile(
                         folder_id=target_folder_id,
                         filename=filename,
-                        file_path=str(file_path),
+                        file_path=to_relative_path(file_path),
                         file_type=file_type,
                         file_size=len(file_content),
                         file_hash=file_hash,
-                        thumbnail_path=thumbnail_path,
+                        thumbnail_path=to_relative_path(thumbnail_path) if thumbnail_path else None,
                         file_metadata=metadata if metadata else None,
                     )
                     db.add(library_file)
@@ -1062,9 +1086,9 @@ async def batch_generate_stl_thumbnails(
     failed = 0
 
     for stl_file in stl_files:
-        file_path = Path(stl_file.file_path)
+        file_path = to_absolute_path(stl_file.file_path)
 
-        if not file_path.exists():
+        if not file_path or not file_path.exists():
             results.append(
                 BatchThumbnailResult(
                     file_id=stl_file.id,
@@ -1080,8 +1104,8 @@ async def batch_generate_stl_thumbnails(
             thumbnail_path = generate_stl_thumbnail(file_path, thumbnails_dir)
 
             if thumbnail_path:
-                # Update database
-                stl_file.thumbnail_path = thumbnail_path
+                # Update database with relative path
+                stl_file.thumbnail_path = to_relative_path(thumbnail_path)
                 await db.flush()
                 results.append(
                     BatchThumbnailResult(
@@ -1843,10 +1867,12 @@ async def delete_file(file_id: int, db: AsyncSession = Depends(get_db)):
 
     # Delete actual files
     try:
-        if file.file_path and os.path.exists(file.file_path):
-            os.remove(file.file_path)
-        if file.thumbnail_path and os.path.exists(file.thumbnail_path):
-            os.remove(file.thumbnail_path)
+        abs_file_path = to_absolute_path(file.file_path)
+        abs_thumb_path = to_absolute_path(file.thumbnail_path)
+        if abs_file_path and abs_file_path.exists():
+            abs_file_path.unlink()
+        if abs_thumb_path and abs_thumb_path.exists():
+            abs_thumb_path.unlink()
     except Exception as e:
         logger.warning(f"Failed to delete file from disk: {e}")
 
@@ -1867,11 +1893,12 @@ async def download_file(file_id: int, db: AsyncSession = Depends(get_db)):
     if not file:
         raise HTTPException(status_code=404, detail="File not found")
 
-    if not file.file_path or not os.path.exists(file.file_path):
+    abs_path = to_absolute_path(file.file_path)
+    if not abs_path or not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
     return FastAPIFileResponse(
-        file.file_path,
+        str(abs_path),
         filename=file.filename,
         media_type="application/octet-stream",
     )
@@ -1886,11 +1913,12 @@ async def get_thumbnail(file_id: int, db: AsyncSession = Depends(get_db)):
     if not file:
         raise HTTPException(status_code=404, detail="File not found")
 
-    if not file.thumbnail_path or not os.path.exists(file.thumbnail_path):
+    abs_thumb_path = to_absolute_path(file.thumbnail_path)
+    if not abs_thumb_path or not abs_thumb_path.exists():
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
     # Detect media type from extension
-    thumb_ext = os.path.splitext(file.thumbnail_path)[1].lower()
+    thumb_ext = abs_thumb_path.suffix.lower()
     media_types = {
         ".png": "image/png",
         ".jpg": "image/jpeg",
@@ -1900,7 +1928,7 @@ async def get_thumbnail(file_id: int, db: AsyncSession = Depends(get_db)):
     }
     media_type = media_types.get(thumb_ext, "image/png")
 
-    return FastAPIFileResponse(file.thumbnail_path, media_type=media_type)
+    return FastAPIFileResponse(str(abs_thumb_path), media_type=media_type)
 
 
 @router.get("/files/{file_id}/gcode")
@@ -1912,17 +1940,18 @@ async def get_gcode(file_id: int, db: AsyncSession = Depends(get_db)):
     if not file:
         raise HTTPException(status_code=404, detail="File not found")
 
-    if not file.file_path or not os.path.exists(file.file_path):
+    abs_path = to_absolute_path(file.file_path)
+    if not abs_path or not abs_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
     if file.file_type == "gcode":
-        return FastAPIFileResponse(file.file_path, media_type="text/plain")
+        return FastAPIFileResponse(str(abs_path), media_type="text/plain")
     elif file.file_type == "3mf":
         # Extract gcode from 3mf
         import zipfile
 
         try:
-            with zipfile.ZipFile(file.file_path, "r") as zf:
+            with zipfile.ZipFile(str(abs_path), "r") as zf:
                 # Find gcode file
                 gcode_files = [n for n in zf.namelist() if n.endswith(".gcode")]
                 if not gcode_files:
@@ -1973,10 +2002,12 @@ async def bulk_delete(data: BulkDeleteRequest, db: AsyncSession = Depends(get_db
         file = result.scalar_one_or_none()
         if file:
             try:
-                if file.file_path and os.path.exists(file.file_path):
-                    os.remove(file.file_path)
-                if file.thumbnail_path and os.path.exists(file.thumbnail_path):
-                    os.remove(file.thumbnail_path)
+                abs_file_path = to_absolute_path(file.file_path)
+                abs_thumb_path = to_absolute_path(file.thumbnail_path)
+                if abs_file_path and abs_file_path.exists():
+                    abs_file_path.unlink()
+                if abs_thumb_path and abs_thumb_path.exists():
+                    abs_thumb_path.unlink()
             except Exception as e:
                 logger.warning(f"Failed to delete file from disk: {e}")
             await db.delete(file)
