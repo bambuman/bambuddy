@@ -1002,6 +1002,13 @@ async def on_print_start(printer_id: int, data: dict):
                 possible_names.append(f"{fname}.gcode.3mf")
                 possible_names.append(f"{fname}.3mf")
 
+        # Also try with spaces converted to underscores (Bambu Studio may normalize filenames)
+        space_variants = []
+        for name in possible_names:
+            if " " in name:
+                space_variants.append(name.replace(" ", "_"))
+        possible_names.extend(space_variants)
+
         # Remove duplicates while preserving order
         seen = set()
         possible_names = [x for x in possible_names if not (x in seen or seen.add(x))]
@@ -1085,7 +1092,10 @@ async def on_print_start(printer_id: int, data: dict):
                         if f.get("is_directory"):
                             continue
                         fname = f.get("name", "")
-                        if fname.endswith(".3mf") and search_term in fname.lower():
+                        # Normalize both for comparison (spaces and underscores are equivalent)
+                        fname_normalized = fname.lower().replace(" ", "_")
+                        search_normalized = search_term.replace(" ", "_")
+                        if fname.endswith(".3mf") and search_normalized in fname_normalized:
                             logger.info(f"Found matching file in {search_dir}: {fname}")
                             temp_path = app_settings.archive_dir / "temp" / fname
                             temp_path.parent.mkdir(parents=True, exist_ok=True)
