@@ -9,6 +9,19 @@ All notable changes to Bambuddy will be documented in this file.
   - **Configurable FPS**: Add `?fps=30` parameter to control camera frame rate (1-30, default 15)
   - **Status-only mode**: Add `?camera=false` parameter to hide camera and show only status overlay on black background
   - Increased default camera FPS from 10 to 15 for smoother video across all camera views
+- **Simplified Backup/Restore System**:
+  - Complete backup now creates a single ZIP file containing the entire database and all data directories
+  - Includes: database, archives, library files, thumbnails, timelapses, icons, projects, and plate calibration data
+  - Portable backups: works across different installations and data directories
+  - Faster backup/restore: direct file copy instead of JSON export/import
+  - Progress indicator and navigation blocking during backup/restore operations
+  - Legacy JSON-based backup/restore still available via `/backup-legacy` and `/restore-legacy` endpoints
+
+### Fixes
+- **Library thumbnails missing after restore** - Fixed library files using absolute paths that break after restore on different systems:
+  - Library now stores relative paths in database for portability
+  - Automatic migration converts existing absolute paths to relative on startup
+  - Thumbnails and files now display correctly after restoring backups
 
 ## [0.1.6-final] - 2026-01-31
 
