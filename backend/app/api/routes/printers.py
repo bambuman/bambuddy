@@ -175,7 +175,10 @@ async def delete_printer(
 
     printer_manager.disconnect_printer(printer_id)
 
-    if not delete_archives:
+    if delete_archives:
+        # Delete all archives for this printer
+        await db.execute(sql_delete(PrintArchive).where(PrintArchive.printer_id == printer_id))
+    else:
         # Orphan the archives instead of deleting them
         from sqlalchemy import update
 
