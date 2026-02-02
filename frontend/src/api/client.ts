@@ -1604,6 +1604,10 @@ export interface UnlinkedSpool {
   location: string | null;
 }
 
+export interface LinkedSpoolsMap {
+  linked: Record<string, number>; // tag (uppercase) -> spool_id
+}
+
 // Update types
 export interface VersionInfo {
   version: string;
@@ -2944,6 +2948,8 @@ export const api = {
     request<{ filaments: unknown[] }>('/spoolman/filaments'),
   getUnlinkedSpools: () =>
     request<UnlinkedSpool[]>('/spoolman/spools/unlinked'),
+  getLinkedSpools: () =>
+    request<LinkedSpoolsMap>('/spoolman/spools/linked'),
   linkSpool: (spoolId: number, trayUuid: string) =>
     request<{ success: boolean; message: string }>(`/spoolman/spools/${spoolId}/link`, {
       method: 'POST',

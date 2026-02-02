@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Loader2, Link2, Check } from 'lucide-react';
 import { api } from '../api/client';
 import { Button } from './Button';
+import { useToast } from '../contexts/ToastContext';
 
 interface LinkSpoolModalProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ interface LinkSpoolModalProps {
 
 export function LinkSpoolModal({ isOpen, onClose, trayUuid, trayInfo }: LinkSpoolModalProps) {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [selectedSpoolId, setSelectedSpoolId] = useState<number | null>(null);
 
   // Fetch unlinked spools
@@ -31,8 +33,13 @@ export function LinkSpoolModal({ isOpen, onClose, trayUuid, trayInfo }: LinkSpoo
     mutationFn: (spoolId: number) => api.linkSpool(spoolId, trayUuid),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['unlinked-spools'] });
+      queryClient.invalidateQueries({ queryKey: ['linked-spools'] });
       queryClient.invalidateQueries({ queryKey: ['spoolman-status'] });
+      showToast('Spool linked to Spoolman successfully', 'success');
       onClose();
+    },
+    onError: (error: Error) => {
+      showToast(`Failed to link spool: ${error.message}`, 'error');
     },
   });
 

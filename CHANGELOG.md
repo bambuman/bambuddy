@@ -4,6 +4,15 @@ All notable changes to Bambuddy will be documented in this file.
 
 ## [0.1.7b] - Not released
 
+### Enhancements
+- **Spoolman: Open in Spoolman Button** (Issue #210):
+  - FilamentHoverCard now shows "Open in Spoolman" button when spool is already linked in Spoolman
+  - Button links directly to the spool's page in Spoolman for quick editing
+  - "Link to Spoolman" button now only shows when spool is not yet linked
+  - Link button correctly disabled when no unlinked spools are available in Spoolman
+  - Toast notification shown on successful/failed spool linking
+  - Added `/api/v1/spoolman/spools/linked` endpoint returning map of linked spool tags to IDs
+
 ## [0.1.6.2] - 2026-02-02
 
 > **Security Release**: This release addresses critical security vulnerabilities. Users running authentication-enabled instances should upgrade immediately.

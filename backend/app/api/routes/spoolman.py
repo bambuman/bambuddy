@@ -468,7 +468,9 @@ async def get_unlinked_spools(db: AsyncSession = Depends(get_db)):
         # Check if spool has a tag in extra field
         extra = spool.get("extra", {}) or {}
         tag = extra.get("tag", "")
-        if not tag:
+        # Remove quotes if present (JSON encoded string) and check if empty
+        clean_tag = tag.strip('"') if tag else ""
+        if not clean_tag:
             filament = spool.get("filament", {}) or {}
             unlinked.append(
                 UnlinkedSpool(
@@ -482,6 +484,39 @@ async def get_unlinked_spools(db: AsyncSession = Depends(get_db)):
             )
 
     return unlinked
+
+
+@router.get("/spools/linked")
+async def get_linked_spools(db: AsyncSession = Depends(get_db)):
+    """Get a map of tag -> spool_id for all Spoolman spools that have a tag assigned."""
+    enabled, url, _ = await get_spoolman_settings(db)
+    if not enabled:
+        raise HTTPException(status_code=400, detail="Spoolman integration is not enabled")
+
+    client = await get_spoolman_client()
+    if not client:
+        if url:
+            client = await init_spoolman_client(url)
+        else:
+            raise HTTPException(status_code=400, detail="Spoolman URL is not configured")
+
+    if not await client.health_check():
+        raise HTTPException(status_code=503, detail="Spoolman is not reachable")
+
+    spools = await client.get_spools()
+    linked: dict[str, int] = {}
+
+    for spool in spools:
+        # Check if spool has a tag in extra field
+        extra = spool.get("extra", {}) or {}
+        tag = extra.get("tag", "")
+        if tag:
+            # Remove quotes if present (JSON encoded string)
+            clean_tag = tag.strip('"').upper()
+            if clean_tag:
+                linked[clean_tag] = spool["id"]
+
+    return {"linked": linked}
 
 
 class LinkSpoolRequest(BaseModel):

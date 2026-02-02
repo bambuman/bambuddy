@@ -914,6 +914,8 @@ function PrinterCard({
   amsThresholds,
   spoolmanEnabled = false,
   hasUnlinkedSpools = false,
+  linkedSpools,
+  spoolmanUrl,
   timeFormat = 'system',
   cameraViewMode = 'window',
   onOpenEmbeddedCamera,
@@ -932,6 +934,8 @@ function PrinterCard({
   };
   spoolmanEnabled?: boolean;
   hasUnlinkedSpools?: boolean;
+  linkedSpools?: Record<string, number>;
+  spoolmanUrl?: string | null;
   timeFormat?: 'system' | '12h' | '24h';
   cameraViewMode?: 'window' | 'embedded';
   onOpenEmbeddedCamera?: (printerId: number, printerName: string) => void;
@@ -2316,6 +2320,8 @@ function PrinterCard({
                                         spoolman={{
                                           enabled: spoolmanEnabled,
                                           hasUnlinkedSpools,
+                                          linkedSpoolId: filamentData.trayUuid ? linkedSpools?.[filamentData.trayUuid.toUpperCase()] : undefined,
+                                          spoolmanUrl,
                                           onLinkSpool: spoolmanEnabled && filamentData.trayUuid ? (uuid) => {
                                             setLinkSpoolModal({
                                               trayUuid: uuid,
@@ -2505,6 +2511,8 @@ function PrinterCard({
                                     spoolman={{
                                       enabled: spoolmanEnabled,
                                       hasUnlinkedSpools,
+                                      linkedSpoolId: filamentData.trayUuid ? linkedSpools?.[filamentData.trayUuid.toUpperCase()] : undefined,
+                                      spoolmanUrl,
                                       onLinkSpool: spoolmanEnabled && filamentData.trayUuid ? (uuid) => {
                                         setLinkSpoolModal({
                                           trayUuid: uuid,
@@ -2633,6 +2641,8 @@ function PrinterCard({
                               spoolman={{
                                 enabled: spoolmanEnabled,
                                 hasUnlinkedSpools,
+                                linkedSpoolId: extFilamentData.trayUuid ? linkedSpools?.[extFilamentData.trayUuid.toUpperCase()] : undefined,
+                                spoolmanUrl,
                                 onLinkSpool: spoolmanEnabled && extFilamentData.trayUuid ? (uuid) => {
                                   setLinkSpoolModal({
                                     trayUuid: uuid,
@@ -4471,6 +4481,15 @@ export function PrintersPage() {
   });
   const hasUnlinkedSpools = unlinkedSpools && unlinkedSpools.length > 0;
 
+  // Fetch linked spools map (tag -> spool_id) to know which spools are already in Spoolman
+  const { data: linkedSpoolsData } = useQuery({
+    queryKey: ['linked-spools'],
+    queryFn: api.getLinkedSpools,
+    enabled: !!spoolmanEnabled,
+    staleTime: 30 * 1000, // 30 seconds
+  });
+  const linkedSpools = linkedSpoolsData?.linked;
+
   // Create a map of printer_id -> maintenance info for quick lookup
   const maintenanceByPrinter = maintenanceOverview?.reduce(
     (acc, overview) => {
@@ -4777,6 +4796,8 @@ export function PrintersPage() {
                     } : undefined}
                     spoolmanEnabled={spoolmanEnabled}
                     hasUnlinkedSpools={hasUnlinkedSpools}
+                    linkedSpools={linkedSpools}
+                    spoolmanUrl={spoolmanStatus?.url}
                     timeFormat={settings?.time_format || 'system'}
                     cameraViewMode={settings?.camera_view_mode || 'window'}
                     onOpenEmbeddedCamera={(id, name) => setEmbeddedCameraPrinters(prev => new Map(prev).set(id, { id, name }))}
@@ -4800,6 +4821,8 @@ export function PrintersPage() {
               cardSize={cardSize}
               spoolmanEnabled={spoolmanEnabled}
               hasUnlinkedSpools={hasUnlinkedSpools}
+              linkedSpools={linkedSpools}
+              spoolmanUrl={spoolmanStatus?.url}
               amsThresholds={settings ? {
                 humidityGood: Number(settings.ams_humidity_good) || 40,
                 humidityFair: Number(settings.ams_humidity_fair) || 60,

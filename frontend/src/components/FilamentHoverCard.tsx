@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react';
-import { Droplets, Link2, Copy, Check, Settings2 } from 'lucide-react';
+import { Droplets, Link2, Copy, Check, Settings2, ExternalLink } from 'lucide-react';
 
 interface FilamentData {
   vendor: 'Bambu Lab' | 'Generic';
@@ -15,6 +15,8 @@ interface SpoolmanConfig {
   enabled: boolean;
   onLinkSpool?: (trayUuid: string) => void;
   hasUnlinkedSpools?: boolean; // Whether there are spools available to link
+  linkedSpoolId?: number | null; // Spoolman spool ID if this tray is already linked
+  spoolmanUrl?: string | null; // Base URL for Spoolman (for "Open in Spoolman" link)
 }
 
 interface ConfigureSlotConfig {
@@ -270,8 +272,23 @@ export function FilamentHoverCard({ data, children, disabled, className = '', sp
                     </button>
                   </div>
 
-                  {/* Link Spool button */}
-                  {spoolman.onLinkSpool && (
+                  {/* Open in Spoolman button (when already linked) */}
+                  {spoolman.linkedSpoolId && spoolman.spoolmanUrl && (
+                    <a
+                      href={`${spoolman.spoolmanUrl.replace(/\/$/, '')}/spool/show/${spoolman.linkedSpoolId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded transition-colors bg-bambu-green/20 hover:bg-bambu-green/30 text-bambu-green"
+                      title="View this spool in Spoolman"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Open in Spoolman
+                    </a>
+                  )}
+
+                  {/* Link Spool button (when not linked) */}
+                  {!spoolman.linkedSpoolId && spoolman.onLinkSpool && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
