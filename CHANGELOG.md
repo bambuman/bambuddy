@@ -4,6 +4,8 @@ All notable changes to Bambuddy will be documented in this file.
 
 ## [0.1.7b] - Not released
 
+## [0.1.6.2] - 2026-02-02
+
 ### Enhancements
 - **Location Filter for Queue** (Issue #220):
   - Filter queue jobs by printer location in the Queue page
