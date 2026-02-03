@@ -5,7 +5,7 @@ import json
 import logging
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -74,6 +74,18 @@ class PrintScheduler:
             for item in items:
                 # Check scheduled time first (scheduled_time is stored in UTC from ISO string)
                 if item.scheduled_time and item.scheduled_time > datetime.utcnow():
+                    continue
+
+                # Safety: Skip stale items (older than 24 hours) to prevent phantom reprints
+                # This protects against items that got stuck in "pending" status due to
+                # crashes/restarts after the print already started
+                stale_threshold = timedelta(hours=24)
+                if item.created_at and datetime.utcnow() - item.created_at.replace(tzinfo=None) > stale_threshold:
+                    logger.warning(f"Queue item {item.id} is stale (created {item.created_at}), marking as expired")
+                    item.status = "expired"
+                    item.error_message = "Queue item expired - older than 24 hours"
+                    item.completed_at = datetime.utcnow()
+                    await db.commit()
                     continue
 
                 # Skip items that require manual start
@@ -809,6 +821,28 @@ class PrintScheduler:
                 logger.error(f"Queue item {item.id}: Archive {item.archive_id} not found")
                 await self._power_off_if_needed(db, item)
                 return
+
+            # Safety: Check if this archive was printed recently (within 4 hours)
+            # This prevents phantom reprints if a queue item got stuck in "pending"
+            # after its print already started due to a crash/restart
+            if archive.status == "completed" and archive.completed_at:
+                completed_at = (
+                    archive.completed_at.replace(tzinfo=None) if archive.completed_at.tzinfo else archive.completed_at
+                )
+                time_since_completed = datetime.utcnow() - completed_at
+                if time_since_completed < timedelta(hours=4):
+                    logger.warning(
+                        f"Queue item {item.id}: Archive {item.archive_id} was already printed "
+                        f"{time_since_completed.total_seconds() / 3600:.1f} hours ago, skipping to prevent duplicate"
+                    )
+                    item.status = "skipped"
+                    item.error_message = (
+                        f"Archive was already printed {time_since_completed.total_seconds() / 3600:.1f} hours ago"
+                    )
+                    item.completed_at = datetime.utcnow()
+                    await db.commit()
+                    return
+
             file_path = settings.base_dir / archive.file_path
             filename = archive.filename
 
@@ -953,6 +987,17 @@ class PrintScheduler:
             except json.JSONDecodeError:
                 logger.warning(f"Queue item {item.id}: Invalid AMS mapping JSON, ignoring")
 
+        # IMPORTANT: Set status to "printing" BEFORE sending the print command.
+        # This prevents phantom reprints if the backend crashes/restarts after the
+        # print command is sent but before the status update is committed.
+        # If we crash after this commit but before start_print(), the item will be
+        # in "printing" status without actually printing - but that's safer than
+        # accidentally reprinting the same file hours later.
+        item.status = "printing"
+        item.started_at = datetime.utcnow()
+        await db.commit()
+        logger.info(f"Queue item {item.id}: Status set to 'printing', sending print command...")
+
         # Start the print with AMS mapping, plate_id and print options
         started = printer_manager.start_print(
             item.printer_id,
@@ -968,10 +1013,7 @@ class PrintScheduler:
         )
 
         if started:
-            item.status = "printing"
-            item.started_at = datetime.utcnow()
-            await db.commit()
-            logger.info(f"Queue item {item.id}: Print started - {filename}")
+            logger.info(f"Queue item {item.id}: Print started successfully - {filename}")
 
             # Get estimated time for notification
             estimated_time = None
@@ -1003,6 +1045,7 @@ class PrintScheduler:
             except Exception:
                 pass  # Don't fail if MQTT fails
         else:
+            # Print command failed - revert status
             item.status = "failed"
             item.error_message = "Failed to send print command to printer"
             item.completed_at = datetime.utcnow()
