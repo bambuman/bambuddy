@@ -1361,6 +1361,7 @@ async def reset_ams_slot(
     ams_id: int,
     tray_id: int,
     db: AsyncSession = Depends(get_db),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
 ):
     """Reset an AMS slot to empty/unconfigured state.
 
@@ -1403,6 +1404,7 @@ async def reset_ams_slot(
 async def debug_simulate_print_complete(
     printer_id: int,
     db: AsyncSession = Depends(get_db),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
 ):
     """DEBUG: Simulate print completion to test freeze behavior.
 

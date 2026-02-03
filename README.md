@@ -158,6 +158,7 @@
 - Group-based permissions (50+ granular permissions)
 - Default groups: Administrators, Operators, Viewers
 - JWT tokens with secure password hashing
+- Comprehensive API protection (200+ endpoints secured)
 - User management (create, edit, delete, groups)
 - User activity tracking (who uploaded archives, library files, queued prints, started prints)
 

@@ -4,6 +4,14 @@ All notable changes to Bambuddy will be documented in this file.
 
 ## [0.1.7b] - Not released
 
+### Security
+- **Critical: Missing API Endpoint Authentication** (CVE-2026-25505, CVSS 9.8):
+  - Added authentication to 200+ API endpoints that were previously unprotected
+  - All route files now use `RequirePermissionIfAuthEnabled()` for permission checks
+  - Protected endpoints: archives, projects, settings, API keys, groups, cloud, notifications, maintenance, filaments, external links, smart plugs, discovery, firmware, camera, k-profiles, AMS history, pending uploads, updates, spoolman, system, print queue, printers
+  - Image-serving endpoints (thumbnails, timelapse, photos, camera streams) remain public as they require knowing the resource ID and are loaded via `<img>` tags which cannot send Authorization headers
+  - Backend integration tests added to verify endpoint authentication enforcement
+
 ### Enhancements
 - **TOTP Authenticator Support for Bambu Cloud** (Issue #182):
   - Added support for TOTP-based two-factor authentication when connecting to Bambu Cloud
