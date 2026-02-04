@@ -2805,13 +2805,11 @@ export const api = {
 
   // Tasmota Discovery (auto-detects network)
   startTasmotaScan: () =>
-    fetch(`${API_BASE}/smart-plugs/discover/scan`, { method: 'POST' })
-      .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.detail || `HTTP ${res.status}`); })),
+    request<TasmotaScanStatus>('/smart-plugs/discover/scan', { method: 'POST' }),
   getTasmotaScanStatus: () =>
     request<TasmotaScanStatus>('/smart-plugs/discover/status'),
   stopTasmotaScan: () =>
-    fetch(`${API_BASE}/smart-plugs/discover/stop`, { method: 'POST' })
-      .then(res => res.ok ? res.json() : res.json().then(e => { throw new Error(e.detail || `HTTP ${res.status}`); })),
+    request<TasmotaScanStatus>('/smart-plugs/discover/stop', { method: 'POST' }),
   getDiscoveredTasmotaDevices: () =>
     request<DiscoveredTasmotaDevice[]>('/smart-plugs/discover/devices'),
 
