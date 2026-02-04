@@ -1,16 +1,19 @@
 import { useState, useEffect } from 'react';
-import { X, ExternalLink, Box, Code2, Loader2 } from 'lucide-react';
+import { X, ExternalLink, Box, Code2, Loader2, Layers, Check } from 'lucide-react';
 import { ModelViewer } from './ModelViewer';
 import { GcodeViewer } from './GcodeViewer';
 import { Button } from './Button';
 import { api } from '../api/client';
 import { openInSlicer } from '../utils/slicer';
+import type { ArchivePlatesResponse, LibraryFilePlatesResponse, PlateMetadata } from '../types/plates';
 
 type ViewTab = '3d' | 'gcode';
 
 interface ModelViewerModalProps {
-  archiveId: number;
+  archiveId?: number;
+  libraryFileId?: number;
   title: string;
+  fileType?: string;
   onClose: () => void;
 }
 
@@ -22,10 +25,14 @@ interface Capabilities {
   filament_colors: string[];
 }
 
-export function ModelViewerModal({ archiveId, title, onClose }: ModelViewerModalProps) {
+export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, onClose }: ModelViewerModalProps) {
+  const isLibrary = libraryFileId != null;
   const [activeTab, setActiveTab] = useState<ViewTab | null>(null);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [loading, setLoading] = useState(true);
+  const [platesData, setPlatesData] = useState<ArchivePlatesResponse | LibraryFilePlatesResponse | null>(null);
+  const [platesLoading, setPlatesLoading] = useState(false);
+  const [selectedPlateId, setSelectedPlateId] = useState<number | null>(null);
 
   // Close on Escape key
   useEffect(() => {
@@ -37,6 +44,31 @@ export function ModelViewerModal({ archiveId, title, onClose }: ModelViewerModal
   }, [onClose]);
 
   useEffect(() => {
+    setLoading(true);
+
+    if (isLibrary) {
+      const normalizedType = (fileType || '').toLowerCase();
+      const hasModel = normalizedType === '3mf' || normalizedType === 'stl';
+      const hasGcode = normalizedType === 'gcode' || normalizedType === '3mf';
+      setCapabilities({
+        has_model: hasModel,
+        has_gcode: hasGcode,
+        has_source: false,
+        build_volume: { x: 256, y: 256, z: 256 },
+        filament_colors: [],
+      });
+      setActiveTab(hasModel ? '3d' : hasGcode ? 'gcode' : null);
+      setLoading(false);
+      return;
+    }
+
+    if (!archiveId) {
+      setCapabilities(null);
+      setActiveTab(null);
+      setLoading(false);
+      return;
+    }
+
     api.getArchiveCapabilities(archiveId)
       .then(caps => {
         setCapabilities(caps);
@@ -54,12 +86,56 @@ export function ModelViewerModal({ archiveId, title, onClose }: ModelViewerModal
         setActiveTab('3d');
         setLoading(false);
       });
-  }, [archiveId]);
+  }, [archiveId, fileType, isLibrary]);
+
+  useEffect(() => {
+    setPlatesLoading(true);
+    setSelectedPlateId(null);
+
+    if (isLibrary) {
+      const normalizedType = (fileType || '').toLowerCase();
+      if (!libraryFileId || normalizedType !== '3mf') {
+        setPlatesData(null);
+        setPlatesLoading(false);
+        return;
+      }
+      api.getLibraryFilePlates(libraryFileId)
+        .then((data) => setPlatesData(data))
+        .catch(() => setPlatesData(null))
+        .finally(() => setPlatesLoading(false));
+      return;
+    }
+
+    if (!archiveId) {
+      setPlatesData(null);
+      setPlatesLoading(false);
+      return;
+    }
+
+    api.getArchivePlates(archiveId)
+      .then((data) => setPlatesData(data))
+      .catch(() => setPlatesData(null))
+      .finally(() => setPlatesLoading(false));
+  }, [archiveId, fileType, isLibrary, libraryFileId]);
+
+  const plates = platesData?.plates ?? [];
+  const hasMultiplePlates = (platesData?.is_multi_plate ?? false) && plates.length > 1;
+  const selectedPlate: PlateMetadata | null = selectedPlateId == null
+    ? null
+    : plates.find((plate) => plate.index === selectedPlateId) ?? null;
+
+  const canOpenInSlicer = isLibrary ? (fileType || '').toLowerCase() === '3mf' : true;
 
   const handleOpenInSlicer = () => {
+    if (!canOpenInSlicer) return;
     // URL must include .3mf filename for Bambu Studio to recognize the format
     const filename = title || 'model';
-    const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archiveId, filename)}`;
+    if (isLibrary) {
+      const downloadUrl = `${window.location.origin}${api.getLibraryFileDownloadUrl(libraryFileId!)}`;
+      openInSlicer(downloadUrl);
+      return;
+    }
+    const downloadUrl = `${window.location.origin}${api.getArchiveForSlicer(archiveId!, filename)}`;
     openInSlicer(downloadUrl);
   };
 
@@ -76,7 +152,7 @@ export function ModelViewerModal({ archiveId, title, onClose }: ModelViewerModal
         <div className="flex items-center justify-between px-6 py-4 border-b border-bambu-dark-tertiary">
           <h2 className="text-lg font-semibold text-white truncate flex-1 mr-4">{title}</h2>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={handleOpenInSlicer}>
+            <Button variant="secondary" size="sm" onClick={handleOpenInSlicer} disabled={!canOpenInSlicer}>
               <ExternalLink className="w-4 h-4" />
               Open in Slicer
             </Button>
@@ -129,17 +205,109 @@ export function ModelViewerModal({ archiveId, title, onClose }: ModelViewerModal
               <Loader2 className="w-8 h-8 animate-spin text-bambu-green" />
             </div>
           ) : activeTab === '3d' && capabilities ? (
-            <ModelViewer
-              url={capabilities.has_source
-                ? api.getSource3mfDownloadUrl(archiveId)
-                : api.getArchiveDownload(archiveId)}
-              buildVolume={capabilities.build_volume}
-              filamentColors={capabilities.filament_colors}
-              className="w-full h-full"
-            />
+            <div className="w-full h-full flex flex-col gap-3">
+              {hasMultiplePlates && (
+                <div className="rounded-lg border border-bambu-dark-tertiary bg-bambu-dark p-3">
+                  <div className="flex items-center gap-2 text-sm text-bambu-gray mb-2">
+                    <Layers className="w-4 h-4" />
+                    Plates
+                    {platesLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlateId(null)}
+                      className={`flex items-center gap-2 rounded-lg border p-2 text-left transition-colors ${
+                        selectedPlateId == null
+                          ? 'border-bambu-green bg-bambu-green/10'
+                          : 'border-bambu-dark-tertiary bg-bambu-dark-secondary hover:border-bambu-gray'
+                      }`}
+                    >
+                      <div className="w-10 h-10 rounded bg-bambu-dark-tertiary flex items-center justify-center">
+                        <Layers className="w-5 h-5 text-bambu-gray" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-white font-medium truncate">All Plates</p>
+                        <p className="text-xs text-bambu-gray truncate">
+                          {plates.length} plate{plates.length !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      {selectedPlateId == null && (
+                        <Check className="w-4 h-4 text-bambu-green flex-shrink-0" />
+                      )}
+                    </button>
+                    {plates.map((plate) => (
+                      <button
+                        key={plate.index}
+                        type="button"
+                        onClick={() => setSelectedPlateId(plate.index)}
+                        className={`flex items-center gap-2 rounded-lg border p-2 text-left transition-colors ${
+                          selectedPlateId === plate.index
+                            ? 'border-bambu-green bg-bambu-green/10'
+                            : 'border-bambu-dark-tertiary bg-bambu-dark-secondary hover:border-bambu-gray'
+                        }`}
+                      >
+                        {plate.has_thumbnail && plate.thumbnail_url ? (
+                          <img
+                            src={plate.thumbnail_url}
+                            alt={`Plate ${plate.index}`}
+                            className="w-10 h-10 rounded object-cover bg-bambu-dark-tertiary"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded bg-bambu-dark-tertiary flex items-center justify-center">
+                            <Layers className="w-5 h-5 text-bambu-gray" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-white font-medium truncate">
+                            {plate.name || `Plate ${plate.index}`}
+                          </p>
+                          <p className="text-xs text-bambu-gray truncate">
+                            {plate.objects.length > 0
+                              ? plate.objects.slice(0, 2).join(', ') + (plate.objects.length > 2 ? '…' : '')
+                              : `${plate.filaments.length} filament${plate.filaments.length !== 1 ? 's' : ''}`}
+                          </p>
+                        </div>
+                        {selectedPlateId === plate.index && (
+                          <Check className="w-4 h-4 text-bambu-green flex-shrink-0" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedPlate && (
+                    <div className="mt-3 text-xs text-bambu-gray flex flex-wrap gap-x-4 gap-y-1">
+                      <span>Plate {selectedPlate.index}</span>
+                      {selectedPlate.print_time_seconds != null && (
+                        <span>ETA {Math.round(selectedPlate.print_time_seconds / 60)} min</span>
+                      )}
+                      {selectedPlate.filament_used_grams != null && (
+                        <span>{selectedPlate.filament_used_grams.toFixed(1)} g</span>
+                      )}
+                      {selectedPlate.filaments.length > 0 && (
+                        <span>{selectedPlate.filaments.length} filament{selectedPlate.filaments.length !== 1 ? 's' : ''}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex-1">
+                  <ModelViewer
+                    url={isLibrary
+                      ? api.getLibraryFileDownloadUrl(libraryFileId!)
+                      : (capabilities.has_source
+                        ? api.getSource3mfDownloadUrl(archiveId!)
+                        : api.getArchiveDownload(archiveId!))}
+                    fileType={fileType}
+                    buildVolume={capabilities.build_volume}
+                    filamentColors={capabilities.filament_colors}
+                    selectedPlateId={selectedPlateId}
+                    className="w-full h-full"
+                  />
+              </div>
+            </div>
           ) : activeTab === 'gcode' && capabilities ? (
             <GcodeViewer
-              gcodeUrl={api.getArchiveGcode(archiveId)}
+              gcodeUrl={isLibrary ? api.getLibraryFileGcodeUrl(libraryFileId!) : api.getArchiveGcode(archiveId!)}
               filamentColors={capabilities.filament_colors}
               className="w-full h-full"
             />

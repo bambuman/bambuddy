@@ -466,10 +466,8 @@ async def get_archive_stats(
             total_seconds += print_time_seconds
     total_time = total_seconds / 3600  # Convert to hours
 
-    # Multiply filament by quantity to account for multiple items printed
-    filament_result = await db.execute(
-        select(func.sum(PrintArchive.filament_used_grams * func.coalesce(PrintArchive.quantity, 1)))
-    )
+    # Sum filament directly - filament_used_grams already contains the total for the print job
+    filament_result = await db.execute(select(func.coalesce(func.sum(PrintArchive.filament_used_grams), 0)))
     total_filament = filament_result.scalar() or 0
 
     cost_result = await db.execute(select(func.sum(PrintArchive.cost)))
@@ -2254,6 +2252,8 @@ async def get_archive_plates(
     Returns a list of plates with their index, name, thumbnail availability,
     and filament requirements. For single-plate exports, returns a single plate.
     """
+    import json
+    import re
     import xml.etree.ElementTree as ET
 
     service = ArchiveService(db)
@@ -2274,19 +2274,50 @@ async def get_archive_plates(
             # Find all plate gcode files to determine available plates
             gcode_files = [n for n in namelist if n.startswith("Metadata/plate_") and n.endswith(".gcode")]
 
-            if not gcode_files:
-                # No sliced plates found
-                return {"archive_id": archive_id, "filename": archive.filename, "plates": []}
+            # If no gcode is present (source-only or unsliced), fall back to plate JSON/PNG
+            plate_indices: list[int] = []
+            if gcode_files:
+                # Extract plate indices from gcode filenames
+                for gf in gcode_files:
+                    # "Metadata/plate_5.gcode" -> 5
+                    try:
+                        plate_str = gf[15:-6]  # Remove "Metadata/plate_" and ".gcode"
+                        plate_indices.append(int(plate_str))
+                    except ValueError:
+                        pass
+            else:
+                plate_json_files = [n for n in namelist if n.startswith("Metadata/plate_") and n.endswith(".json")]
+                plate_png_files = [
+                    n
+                    for n in namelist
+                    if n.startswith("Metadata/plate_")
+                    and n.endswith(".png")
+                    and "_small" not in n
+                    and "no_light" not in n
+                ]
+                plate_name_candidates = plate_json_files + plate_png_files
+                plate_re = re.compile(r"^Metadata/plate_(\d+)\.(json|png)$")
+                seen_indices: set[int] = set()
+                for name in plate_name_candidates:
+                    match = plate_re.match(name)
+                    if match:
+                        try:
+                            index = int(match.group(1))
+                        except ValueError:
+                            continue
+                        if index in seen_indices:
+                            continue
+                        seen_indices.add(index)
+                        plate_indices.append(index)
 
-            # Extract plate indices from gcode filenames
-            plate_indices = []
-            for gf in gcode_files:
-                # "Metadata/plate_5.gcode" -> 5
-                try:
-                    plate_str = gf[15:-6]  # Remove "Metadata/plate_" and ".gcode"
-                    plate_indices.append(int(plate_str))
-                except ValueError:
-                    pass
+            if not plate_indices:
+                # No plate metadata found
+                return {
+                    "archive_id": archive_id,
+                    "filename": archive.filename,
+                    "plates": [],
+                    "is_multi_plate": False,
+                }
 
             plate_indices.sort()
 
@@ -2391,16 +2422,48 @@ async def get_archive_plates(
 
                         plate_metadata[plate_index] = plate_info
 
+            # Parse plate_*.json for object lists when slice_info is missing
+            plate_json_objects: dict[int, list[str]] = {}
+            for name in namelist:
+                match = re.match(r"^Metadata/plate_(\d+)\.json$", name)
+                if not match:
+                    continue
+                try:
+                    plate_index = int(match.group(1))
+                except ValueError:
+                    continue
+                try:
+                    payload = json.loads(zf.read(name).decode())
+                    bbox_objects = payload.get("bbox_objects", [])
+                    names = []
+                    for obj in bbox_objects:
+                        obj_name = obj.get("name") if isinstance(obj, dict) else None
+                        if obj_name and obj_name not in names:
+                            names.append(obj_name)
+                    if names:
+                        plate_json_objects[plate_index] = names
+                except Exception:
+                    continue
+
             # Build plate list
             for idx in plate_indices:
                 meta = plate_metadata.get(idx, {})
                 has_thumbnail = f"Metadata/plate_{idx}.png" in namelist
+                objects = meta.get("objects", [])
+                if not objects:
+                    objects = plate_json_objects.get(idx, [])
+
+                plate_name = meta.get("name")
+                if not plate_name:
+                    plate_name = plate_names.get(idx)
+                if not plate_name and objects:
+                    plate_name = objects[0]
 
                 plates.append(
                     {
                         "index": idx,
-                        "name": meta.get("name"),
-                        "objects": meta.get("objects", []),
+                        "name": plate_name,
+                        "objects": objects,
                         "has_thumbnail": has_thumbnail,
                         "thumbnail_url": f"/api/v1/archives/{archive_id}/plate-thumbnail/{idx}"
                         if has_thumbnail
@@ -2511,6 +2574,8 @@ async def get_filament_requirements(
                                 used_g = filament_elem.get("used_g", "0")
                                 used_m = filament_elem.get("used_m", "0")
 
+                                tray_info_idx = filament_elem.get("tray_info_idx", "")
+
                                 try:
                                     used_grams = float(used_g)
                                 except (ValueError, TypeError):
@@ -2524,6 +2589,7 @@ async def get_filament_requirements(
                                             "color": filament_color,
                                             "used_grams": round(used_grams, 1),
                                             "used_meters": float(used_m) if used_m else 0,
+                                            "tray_info_idx": tray_info_idx,
                                         }
                                     )
                             break
@@ -2536,6 +2602,8 @@ async def get_filament_requirements(
                         filament_color = filament_elem.get("color", "")
                         used_g = filament_elem.get("used_g", "0")
                         used_m = filament_elem.get("used_m", "0")
+
+                        tray_info_idx = filament_elem.get("tray_info_idx", "")
 
                         # Only include filaments that are actually used
                         try:
@@ -2551,6 +2619,7 @@ async def get_filament_requirements(
                                     "color": filament_color,
                                     "used_grams": round(used_grams, 1),
                                     "used_meters": float(used_m) if used_m else 0,
+                                    "tray_info_idx": tray_info_idx,
                                 }
                             )
 
