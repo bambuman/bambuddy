@@ -920,7 +920,7 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
 
   return (
     <div
-      className={`group relative bg-bambu-card rounded-lg border transition-all cursor-pointer overflow-hidden ${
+      className={`group relative bg-bambu-dark-secondary rounded-lg border transition-all cursor-pointer overflow-hidden ${
         isSelected
           ? 'border-bambu-green ring-1 ring-bambu-green'
           : 'border-bambu-dark-tertiary hover:border-bambu-green/50'
@@ -1530,7 +1530,7 @@ export function FileManagerPage() {
             <button
               onClick={() => handleViewModeChange('grid')}
               className={`p-1.5 rounded transition-colors ${
-                viewMode === 'grid' ? 'bg-bambu-card text-white' : 'text-bambu-gray hover:text-white'
+                viewMode === 'grid' ? 'bg-bambu-dark-secondary text-white' : 'text-bambu-gray hover:text-white'
               }`}
               title={t('fileManager.gridView')}
             >
@@ -1539,7 +1539,7 @@ export function FileManagerPage() {
             <button
               onClick={() => handleViewModeChange('list')}
               className={`p-1.5 rounded transition-colors ${
-                viewMode === 'list' ? 'bg-bambu-card text-white' : 'text-bambu-gray hover:text-white'
+                viewMode === 'list' ? 'bg-bambu-dark-secondary text-white' : 'text-bambu-gray hover:text-white'
               }`}
               title={t('fileManager.listView')}
             >
@@ -1594,7 +1594,7 @@ export function FileManagerPage() {
 
       {/* Stats bar */}
       {stats && (
-        <div className="flex flex-wrap items-center gap-3 sm:gap-6 mb-6 p-3 bg-bambu-card rounded-lg border border-bambu-dark-tertiary">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-6 mb-6 p-3 bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary">
           <div className="flex items-center gap-2 text-sm">
             <File className="w-4 h-4 text-bambu-green" />
             <span className="text-bambu-gray">{t('fileManager.files')}:</span>
@@ -1626,7 +1626,7 @@ export function FileManagerPage() {
           <select
             value={selectedFolderId ?? ''}
             onChange={(e) => setSelectedFolderId(e.target.value ? parseInt(e.target.value, 10) : null)}
-            className="w-full bg-bambu-card border border-bambu-dark-tertiary rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-bambu-green"
+            className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-bambu-green"
           >
             <option value="">📁 {t('fileManager.allFiles')}</option>
             {folders && (() => {
@@ -1653,7 +1653,7 @@ export function FileManagerPage() {
         {/* Folder sidebar - resizable, hidden on mobile */}
         <div
           ref={sidebarRef}
-          className="hidden lg:flex flex-shrink-0 bg-bambu-card rounded-lg border border-bambu-dark-tertiary overflow-hidden flex-col relative"
+          className="hidden lg:flex flex-shrink-0 bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary overflow-hidden flex-col relative"
           style={{ width: `${sidebarWidth}px` }}
         >
           {/* Resize handle - drag to resize, double-click to reset */}
@@ -1732,7 +1732,7 @@ export function FileManagerPage() {
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           {/* Search, Filter, Sort toolbar - sticky on mobile for easier access */}
           {files && files.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 p-2 sm:p-3 bg-bambu-card rounded-lg border border-bambu-dark-tertiary sticky top-0 z-10 lg:static">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 p-2 sm:p-3 bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary sticky top-0 z-10 lg:static">
               {/* Search */}
               <div className="relative w-full sm:w-auto sm:flex-1 sm:max-w-xs">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray" />
@@ -1770,12 +1770,13 @@ export function FileManagerPage() {
                   value={filterUsername}
                   onChange={(e) => setFilterUsername(e.target.value)}
                   list="usernames-list"
-                  className="w-32 sm:w-40 px-2 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+                  className={`w-32 sm:w-40 px-2 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green ${filterUsername ? 'pr-7' : ''}`}
+                  style={filterUsername ? { WebkitAppearance: 'none', MozAppearance: 'textfield' } : undefined}
                 />
                 {filterUsername && (
                   <button
                     onClick={() => setFilterUsername('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-bambu-gray hover:text-white"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-bambu-gray hover:text-white z-10"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -1832,7 +1833,7 @@ export function FileManagerPage() {
 
           {/* Selection toolbar - sticky on mobile below search bar */}
           {filteredAndSortedFiles.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 mb-4 p-2 bg-bambu-card rounded-lg border border-bambu-dark-tertiary sticky top-[52px] z-10 lg:static">
+            <div className="flex flex-wrap items-center gap-2 mb-4 p-2 bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary sticky top-[52px] z-10 lg:static">
               {/* Select all / Deselect all */}
               {selectedFiles.length === filteredAndSortedFiles.length && selectedFiles.length > 0 ? (
                 <Button
@@ -2000,22 +2001,22 @@ export function FileManagerPage() {
             </div>
           ) : (
             <div className="flex-1 lg:overflow-y-auto">
-              <div className="bg-bambu-card rounded-lg border border-bambu-dark-tertiary overflow-hidden">
+              <div className="bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary overflow-hidden">
                 {/* List header - hidden on mobile, show simplified on small screens */}
-                <div className="hidden sm:grid grid-cols-[auto_1fr_100px_100px_100px_120px_80px] gap-4 px-4 py-2 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary text-xs text-bambu-gray font-medium">
+                <div className="hidden sm:grid grid-cols-[auto_1fr_120px_100px_100px_100px_80px] gap-4 px-4 py-2 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary text-xs text-bambu-gray font-medium">
                   <div className="w-6" />
                   <div>{t('common.name')}</div>
+                  <div>{t('fileManager.uploadedBy', { defaultValue: 'Uploaded By' })}</div>
                   <div>{t('common.type')}</div>
                   <div>{t('fileManager.size')}</div>
                   <div>{t('fileManager.prints')}</div>
-                  <div>{t('fileManager.uploadedBy', { defaultValue: 'Uploaded By' })}</div>
                   <div />
                 </div>
                 {/* List rows */}
                 {filteredAndSortedFiles.map((file) => (
                   <div
                     key={file.id}
-                    className={`grid grid-cols-[auto_1fr_100px_100px_100px_120px_80px] gap-4 px-4 py-3 items-center border-b border-bambu-dark-tertiary last:border-b-0 cursor-pointer hover:bg-bambu-dark/50 transition-colors ${
+                    className={`grid grid-cols-[auto_1fr_120px_100px_100px_100px_80px] gap-4 px-4 py-3 items-center border-b border-bambu-dark-tertiary last:border-b-0 cursor-pointer hover:bg-bambu-dark/50 transition-colors ${
                       selectedFiles.includes(file.id) ? 'bg-bambu-green/10' : ''
                     }`}
                     onClick={() => handleFileSelect(file.id)}
@@ -2061,6 +2062,17 @@ export function FileManagerPage() {
                         <div className="text-sm text-white truncate">{file.print_name || file.filename}</div>
                       </div>
                     </div>
+                    {/* Uploaded By */}
+                    <div className="text-sm text-bambu-gray flex items-center gap-1">
+                      {file.created_by_username ? (
+                        <>
+                          <User className="w-3 h-3" />
+                          <span className="truncate">{file.created_by_username}</span>
+                        </>
+                      ) : (
+                        '-'
+                      )}
+                    </div>
                     {/* Type */}
                     <div>
                       <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
@@ -2076,17 +2088,6 @@ export function FileManagerPage() {
                     <div className="text-sm text-bambu-gray">{formatFileSize(file.file_size)}</div>
                     {/* Prints */}
                     <div className="text-sm text-bambu-gray">{file.print_count > 0 ? `${file.print_count}x` : '-'}</div>
-                    {/* Uploaded By */}
-                    <div className="text-sm text-bambu-gray flex items-center gap-1">
-                      {file.created_by_username ? (
-                        <>
-                          <User className="w-3 h-3" />
-                          <span className="truncate">{file.created_by_username}</span>
-                        </>
-                      ) : (
-                        '-'
-                      )}
-                    </div>
                     {/* Actions */}
                     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       {isSlicedFilename(file.filename) && (
