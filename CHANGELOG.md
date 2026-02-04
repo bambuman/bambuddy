@@ -5,6 +5,14 @@ All notable changes to Bambuddy will be documented in this file.
 
 ## [0.1.8b] - Not released
 
+### Enhanced
+- **Virtual Printer Proxy Mode Improvements**:
+  - SSDP proxy for cross-network setups: select slicer network interface for automatic printer discovery via SSDP relay
+  - FTP proxy now listens on privileged port 990 (matching Bambu Studio expectations) instead of 9990
+  - For systemd: requires `AmbientCapabilities=CAP_NET_BIND_SERVICE` capability
+  - Automatic directory permission checking at startup with clear error messages for Docker/bare metal
+  - Updated translations for proxy mode steps in English, German, and Japanese
+
 ### Fixed
 - **Filament Statistics Incorrectly Multiplied by Quantity** (Issue #229):
   - Fixed filament totals being inflated by incorrectly multiplying by quantity

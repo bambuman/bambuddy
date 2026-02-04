@@ -2501,6 +2501,7 @@ async def lifespan(app: FastAPI):
             vp_mode = await get_setting(db, "virtual_printer_mode") or "immediate"
             vp_model = await get_setting(db, "virtual_printer_model") or ""
             vp_target_printer_id = await get_setting(db, "virtual_printer_target_printer_id")
+            vp_remote_iface = await get_setting(db, "virtual_printer_remote_interface_ip") or ""
 
             # Look up printer IP and serial if in proxy mode
             vp_target_ip = ""
@@ -2526,6 +2527,7 @@ async def lifespan(app: FastAPI):
                         model=vp_model,
                         target_printer_ip=vp_target_ip,
                         target_printer_serial=vp_target_serial,
+                        remote_interface_ip=vp_remote_iface,
                     )
                     if vp_mode == "proxy":
                         logging.info(f"Virtual printer proxy started (target={vp_target_ip})")

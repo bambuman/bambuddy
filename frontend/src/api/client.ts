@@ -2722,6 +2722,8 @@ export const api = {
   },
   checkFfmpeg: () =>
     request<{ installed: boolean; path: string | null }>('/settings/check-ffmpeg'),
+  getNetworkInterfaces: () =>
+    request<{ interfaces: NetworkInterface[] }>('/settings/network-interfaces'),
 
   // Cloud
   getCloudStatus: () => request<CloudAuthStatus>('/cloud/status'),
@@ -3975,7 +3977,15 @@ export interface VirtualPrinterSettings {
   mode: VirtualPrinterMode;
   model: string;
   target_printer_id: number | null;  // For proxy mode
+  remote_interface_ip: string | null;  // For SSDP proxy across networks
   status: VirtualPrinterStatus;
+}
+
+export interface NetworkInterface {
+  name: string;
+  ip: string;
+  netmask: string;
+  subnet: string;
 }
 
 export interface VirtualPrinterModels {
@@ -4007,6 +4017,7 @@ export const virtualPrinterApi = {
     mode?: 'immediate' | 'review' | 'print_queue' | 'proxy';
     model?: string;
     target_printer_id?: number;
+    remote_interface_ip?: string;
   }) => {
     const params = new URLSearchParams();
     if (data.enabled !== undefined) params.set('enabled', String(data.enabled));
@@ -4014,6 +4025,7 @@ export const virtualPrinterApi = {
     if (data.mode !== undefined) params.set('mode', data.mode);
     if (data.model !== undefined) params.set('model', data.model);
     if (data.target_printer_id !== undefined) params.set('target_printer_id', String(data.target_printer_id));
+    if (data.remote_interface_ip !== undefined) params.set('remote_interface_ip', data.remote_interface_ip);
 
     return request<VirtualPrinterSettings>(`/settings/virtual-printer?${params.toString()}`, {
       method: 'PUT',
