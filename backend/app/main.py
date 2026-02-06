@@ -1096,7 +1096,9 @@ async def on_print_start(printer_id: int, data: dict):
                 if downloaded_filename:
                     break
                 try:
-                    dir_files = await list_files_async(printer.ip_address, printer.access_code, search_dir)
+                    dir_files = await list_files_async(
+                        printer.ip_address, printer.access_code, search_dir, printer_model=printer.model
+                    )
                     threemf_files = [f.get("name") for f in dir_files if f.get("name", "").endswith(".3mf")]
                     if threemf_files:
                         logger.info(
@@ -1120,6 +1122,8 @@ async def on_print_start(printer_id: int, data: dict):
                                     printer.access_code,
                                     f"{search_dir}/{fname}",
                                     temp_path,
+                                    socket_timeout=ftp_timeout,
+                                    printer_model=printer.model,
                                     max_retries=ftp_retry_count,
                                     retry_delay=ftp_retry_delay,
                                     operation_name=f"Download 3MF from {search_dir}/{fname}",
@@ -1130,6 +1134,8 @@ async def on_print_start(printer_id: int, data: dict):
                                     printer.access_code,
                                     f"{search_dir}/{fname}",
                                     temp_path,
+                                    socket_timeout=ftp_timeout,
+                                    printer_model=printer.model,
                                 )
                             if downloaded:
                                 downloaded_filename = fname
@@ -1413,7 +1419,9 @@ async def _scan_for_timelapse_with_retries(archive_id: int):
                 found_path = None
                 for timelapse_path in ["/timelapse", "/timelapse/video", "/record", "/recording"]:
                     try:
-                        found_files = await list_files_async(printer.ip_address, printer.access_code, timelapse_path)
+                        found_files = await list_files_async(
+                            printer.ip_address, printer.access_code, timelapse_path, printer_model=printer.model
+                        )
                         if found_files:
                             files = found_files
                             found_path = timelapse_path
@@ -1455,7 +1463,9 @@ async def _scan_for_timelapse_with_retries(archive_id: int):
                 # Since we KNOW timelapse was active (from MQTT), just grab the most recent file
                 remote_path = most_recent.get("path") or f"/timelapse/{file_name}"
                 logger.info("[TIMELAPSE] Downloading %s for archive %s", file_name, archive_id)
-                timelapse_data = await download_file_bytes_async(printer.ip_address, printer.access_code, remote_path)
+                timelapse_data = await download_file_bytes_async(
+                    printer.ip_address, printer.access_code, remote_path, printer_model=printer.model
+                )
 
                 if timelapse_data:
                     success = await service.attach_timelapse(archive_id, timelapse_data, file_name)

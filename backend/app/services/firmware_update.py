@@ -140,6 +140,7 @@ class FirmwareUpdateService:
                 storage_info = await get_storage_info_async(
                     printer.ip_address,
                     printer.access_code,
+                    printer_model=printer.model,
                 )
                 if storage_info and "free_bytes" in storage_info:
                     result["sd_card_free_space"] = storage_info["free_bytes"]

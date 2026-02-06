@@ -1186,7 +1186,9 @@ async def scan_timelapse(
     files = []
     for timelapse_path in ["/timelapse", "/timelapse/video"]:
         try:
-            files = await list_files_async(printer.ip_address, printer.access_code, timelapse_path)
+            files = await list_files_async(
+                printer.ip_address, printer.access_code, timelapse_path, printer_model=printer.model
+            )
             if files:
                 break
         except Exception:
@@ -1406,7 +1408,9 @@ async def select_timelapse(
     remote_path = None
     for timelapse_dir in ["/timelapse", "/timelapse/video"]:
         try:
-            files = await list_files_async(printer.ip_address, printer.access_code, timelapse_dir)
+            files = await list_files_async(
+                printer.ip_address, printer.access_code, timelapse_dir, printer_model=printer.model
+            )
             for f in files:
                 if f.get("name") == filename:
                     remote_path = f.get("path") or f"{timelapse_dir}/{filename}"

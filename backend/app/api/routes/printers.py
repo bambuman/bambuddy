@@ -637,6 +637,7 @@ async def get_printer_cover(
                 printer.access_code,
                 remote_paths,
                 temp_path,
+                printer_model=printer.model,
             )
             if downloaded:
                 break
@@ -750,7 +751,7 @@ async def list_printer_files(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    files = await list_files_async(printer.ip_address, printer.access_code, path)
+    files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
 
     # Add full path to each file
     for f in files:
@@ -775,7 +776,7 @@ async def download_printer_file(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path)
+    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -819,7 +820,7 @@ async def get_printer_file_gcode(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path)
+    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -871,7 +872,7 @@ async def get_printer_file_plates(
             "is_multi_plate": False,
         }
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path)
+    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -1102,7 +1103,7 @@ async def get_printer_file_plate_thumbnail(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path)
+    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
         raise HTTPException(404, f"File not found: {path}")
 
@@ -1142,7 +1143,9 @@ async def download_printer_files_as_zip(
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in paths:
             try:
-                data = await download_file_bytes_async(printer.ip_address, printer.access_code, path)
+                data = await download_file_bytes_async(
+                    printer.ip_address, printer.access_code, path, printer_model=printer.model
+                )
                 if data:
                     filename = path.split("/")[-1]
                     zf.writestr(filename, data)
@@ -1176,7 +1179,7 @@ async def delete_printer_file(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    success = await delete_file_async(printer.ip_address, printer.access_code, path)
+    success = await delete_file_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if not success:
         raise HTTPException(500, f"Failed to delete file: {path}")
 
@@ -1195,7 +1198,7 @@ async def get_printer_storage(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    storage_info = await get_storage_info_async(printer.ip_address, printer.access_code)
+    storage_info = await get_storage_info_async(printer.ip_address, printer.access_code, printer_model=printer.model)
 
     return storage_info or {"used_bytes": None, "free_bytes": None}
 
@@ -1919,7 +1922,11 @@ async def get_printable_objects(
 
             try:
                 downloaded = await download_file_try_paths_async(
-                    printer.ip_address, printer.access_code, remote_paths, temp_path
+                    printer.ip_address,
+                    printer.access_code,
+                    remote_paths,
+                    temp_path,
+                    printer_model=printer.model,
                 )
                 if downloaded and temp_path.exists():
                     with open(temp_path, "rb") as f:
